@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Pushes to feature branches are covered by pull_request; listing them under push
+  # too would run the suite twice for every commit on an open PR.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
