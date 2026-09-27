@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -11,6 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { AiChatSidebar } from "@/components/AiChatSidebar";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
 import {
@@ -20,6 +21,8 @@ import {
   moveCard,
   type BoardData,
 } from "@/lib/kanban";
+
+const BOARD_REFRESH_EVENT = "kanban:board-refresh";
 
 const getBoardApiUrl = () => {
   if (typeof window === "undefined") {
@@ -52,25 +55,36 @@ export const KanbanBoard = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    const loadBoard = async () => {
-      setIsLoading(true);
-      try {
-        const response = await fetch(getBoardApiUrl());
-        if (!response.ok) {
-          throw new Error("Failed to load board data.");
-        }
-        const data = (await response.json()) as BoardData;
-        setBoard(data);
-      } catch {
-        setBoard(initialData);
-      } finally {
-        setIsLoading(false);
+  const loadBoard = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(getBoardApiUrl());
+      if (!response.ok) {
+        throw new Error("Failed to load board data.");
       }
+      const data = (await response.json()) as BoardData;
+      setBoard(data);
+    } catch {
+      setBoard(initialData);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBoard();
+  }, [loadBoard]);
+
+  useEffect(() => {
+    const handleRefresh = () => {
+      void loadBoard();
     };
 
-    void loadBoard();
-  }, []);
+    window.addEventListener(BOARD_REFRESH_EVENT, handleRefresh);
+    return () => {
+      window.removeEventListener(BOARD_REFRESH_EVENT, handleRefresh);
+    };
+  }, [loadBoard]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -205,6 +219,11 @@ export const KanbanBoard = () => {
               </p>
             </div>
             <div className="flex items-center gap-3">
+              {isLoading ? (
+                <div className="rounded-full border border-[var(--stroke)] bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--gray-text)]">
+                  Syncing
+                </div>
+              ) : null}
               {isSaving ? (
                 <div className="rounded-full border border-[var(--stroke)] bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--gray-text)]">
                   Saving
@@ -225,34 +244,38 @@ export const KanbanBoard = () => {
           </div>
         </header>
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={pointerWithin}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragEnd={handleDragEnd}
-        >
-          <section className="grid gap-6 lg:grid-cols-5">
-            {board.columns.map((column) => (
-              <KanbanColumn
-                key={column.id}
-                column={column}
-                cards={column.cardIds.map((cardId) => board.cards[cardId])}
-                isDropTarget={dragOverColumnId === column.id}
-                onRename={handleRenameColumn}
-                onAddCard={handleAddCard}
-                onDeleteCard={handleDeleteCard}
-              />
-            ))}
-          </section>
-          <DragOverlay>
-            {activeCard ? (
-              <div className="w-[260px]">
-                <KanbanCardPreview card={activeCard} />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={pointerWithin}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+          >
+            <section className="grid gap-6 lg:grid-cols-5">
+              {board.columns.map((column) => (
+                <KanbanColumn
+                  key={column.id}
+                  column={column}
+                  cards={column.cardIds.map((cardId) => board.cards[cardId])}
+                  isDropTarget={dragOverColumnId === column.id}
+                  onRename={handleRenameColumn}
+                  onAddCard={handleAddCard}
+                  onDeleteCard={handleDeleteCard}
+                />
+              ))}
+            </section>
+            <DragOverlay>
+              {activeCard ? (
+                <div className="w-[260px]">
+                  <KanbanCardPreview card={activeCard} />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+
+          <AiChatSidebar />
+        </div>
       </main>
     </div>
   );

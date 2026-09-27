@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import Home from "@/app/page";
@@ -137,5 +137,77 @@ describe("KanbanBoard", () => {
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
     expect(screen.getByText("Saved card")).toBeInTheDocument();
+  });
+
+  it("refreshes the board when the AI signals an update", async () => {
+    const initialBoard = {
+      columns: [
+        { id: "col-backlog", title: "Backlog", cardIds: ["card-1"] },
+        { id: "col-discovery", title: "Discovery", cardIds: [] },
+        { id: "col-progress", title: "In Progress", cardIds: [] },
+        { id: "col-review", title: "Review", cardIds: [] },
+        { id: "col-done", title: "Done", cardIds: [] },
+      ],
+      cards: {
+        "card-1": {
+          id: "card-1",
+          title: "Initial task",
+          details: "Original details",
+        },
+      },
+    };
+
+    const refreshedBoard = {
+      columns: [
+        { id: "col-backlog", title: "Backlog", cardIds: [] },
+        { id: "col-discovery", title: "Discovery", cardIds: [] },
+        { id: "col-progress", title: "In Progress", cardIds: [] },
+        { id: "col-review", title: "Review", cardIds: [] },
+        { id: "col-done", title: "Done", cardIds: ["card-1"] },
+      ],
+      cards: {
+        "card-1": {
+          id: "card-1",
+          title: "Refreshed task",
+          details: "Updated details",
+        },
+      },
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const normalizedUrl = url.includes("/api/board") ? "/api/board" : url;
+
+      if (normalizedUrl === "/api/board" && (!init || init.method === "GET")) {
+        const nextBoard = fetchMock.mock.calls.filter(
+          ([calledUrl, calledInit]) =>
+            String(calledUrl).includes("/api/board") && (!calledInit || calledInit.method === "GET")
+        ).length === 1
+          ? initialBoard
+          : refreshedBoard;
+
+        return {
+          ok: true,
+          json: async () => nextBoard,
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        json: async () => ({}),
+      } as Response;
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<KanbanBoard />);
+
+    expect(await screen.findByText("Initial task")).toBeInTheDocument();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("kanban:board-refresh"));
+    });
+
+    expect(await screen.findByText("Refreshed task")).toBeInTheDocument();
   });
 });

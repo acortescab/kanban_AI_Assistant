@@ -38,6 +38,7 @@ Each column contains cards and supports:
 - adding a new card
 - removing a card
 - dragging a card between columns or within a column
+- chatting with the AI sidebar to request board summaries or board updates, with automatic refresh when the AI returns a valid change
 
 ## Important working assumptions
 

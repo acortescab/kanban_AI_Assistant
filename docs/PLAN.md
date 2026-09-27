@@ -2,6 +2,21 @@
 
 This plan breaks the MVP into concrete phases with executable checklists, validation steps, and clear success criteria. The work should proceed in order and each phase should be considered complete only after the relevant tests or checks pass.
 
+## Current implementation decisions
+
+These design and operational decisions reflect the latest implementation state and should be treated as the current baseline for continued work:
+
+- Local-first Docker stack: the app runs in a single local container via Docker Compose, with the backend serving the built frontend at /.
+- SQLite persistence: the backend stores board state in a local SQLite database and initializes it automatically when absent.
+- Single-user MVP: login is hardcoded to user / password, and the app supports one active board for the signed-in user.
+- Fixed five-column board: the canonical board layout is Backlog, Discovery, In Progress, Review, and Done.
+- Board data contract: the frontend and backend share the same BoardData structure with a columns array and cards object keyed by card id.
+- Frontend architecture: Next.js handles the UI, while FastAPI owns persistence and health endpoints; static frontend output is served from the backend.
+- Operational stability: startup and shutdown scripts keep the stack controllable and avoid stale local state by restarting cleanly.
+- OpenRouter integration: the API key lives in the project .env file and the backend connects with the qwen/qwen3.8-27b:free model.
+- Docker-safe styling: external Google Fonts were removed from the frontend because they break container builds when the environment cannot fetch them at build time; system fonts are used instead.
+- Scope guardrails: no full auth system, no multi-board management, and no over-engineering beyond the approved MVP requirements.
+
 ## Part 1: Plan and project documentation
 
 Goal: confirm the execution plan, document the current frontend baseline, and get approval before implementation begins.
@@ -177,11 +192,11 @@ Success criteria:
 Goal: make the frontend use real persisted data instead of ephemeral local state.
 
 Checklist:
-- [ ] Replace local-only board state with API-backed reads and writes.
-- [ ] Load the current board from the backend on app load.
-- [ ] Save board changes after rename, add-card, remove-card, and drag-and-drop actions.
-- [ ] Handle loading and save states gracefully.
-- [ ] Test the end-to-end persistence flow with high coverage.
+- [x] Replace local-only board state with API-backed reads and writes.
+- [x] Load the current board from the backend on app load.
+- [x] Save board changes after rename, add-card, remove-card, and drag-and-drop actions.
+- [x] Handle loading and save states gracefully.
+- [x] Test the end-to-end persistence flow with high coverage.
 
 Implementation notes:
 - Maintain the existing UI experience, but store board state in the backend.
@@ -205,11 +220,11 @@ Success criteria:
 Goal: validate that the backend can call OpenRouter and receive a response.
 
 Checklist:
-- [ ] Add OpenRouter configuration with the expected API key and model.
-- [ ] Add a minimal backend route or utility for a simple AI test call.
-- [ ] Run a simple prompt such as 2 + 2 and confirm the expected output.
-- [ ] Handle configuration errors or missing API keys without failing silently.
-- [ ] Confirm the app logs or surfaces meaningful errors for AI connectivity failures.
+- [x] Add OpenRouter configuration with the expected API key and model.
+- [x] Add a minimal backend route or utility for a simple AI test call.
+- [x] Run a simple prompt such as 2 + 2 and confirm the expected output.
+- [x] Handle configuration errors or missing API keys without failing silently.
+- [x] Confirm the app logs or surfaces meaningful errors for AI connectivity failures.
 
 Implementation notes:
 - This phase is purely connectivity validation; no business logic yet.
@@ -230,16 +245,17 @@ Success criteria:
 Goal: build the production AI interaction so it receives the current board plus the user prompt and returns structured output with both a response and optional board edits.
 
 Checklist:
-- [ ] Extend the backend AI request to include the full Kanban JSON.
-- [ ] Include user question text and conversation history in the prompt payload.
-- [ ] Add a structured response schema with both textual response and optional board changes.
-- [ ] Parse and validate structured AI output before applying it.
-- [ ] Apply board updates only when the AI response includes valid edits.
-- [ ] Test both conversational replies and board mutation scenarios.
+- [x] Extend the backend AI request to include the full Kanban JSON.
+- [x] Include user question text and conversation history in the prompt payload.
+- [x] Add a structured response schema with both textual response and optional board changes.
+- [x] Parse and validate structured AI output before applying it.
+- [x] Apply board updates only when the AI response includes valid edits.
+- [x] Test both conversational replies and board mutation scenarios.
 
 Implementation notes:
 - The AI may update the board or simply answer a question; both should be handled gracefully.
 - The response model should be explicit and simple to validate.
+- Confirmed defaults: send the full conversation history, allow full board replacement in the structured edit payload, and reject the whole response if any board-edit portion is malformed.
 
 Tests / validation:
 - Unit tests for prompt construction.
@@ -259,12 +275,12 @@ Success criteria:
 Goal: provide an in-app AI chat experience that can update the board and refresh automatically when the AI modifies it.
 
 Checklist:
-- [ ] Add a sidebar chat widget in the UI.
-- [ ] Support sending messages and showing conversation history.
-- [ ] Connect the chat to the backend AI flow.
-- [ ] Render AI responses in the UI.
-- [ ] If the AI returns a valid board update, refresh the board automatically.
-- [ ] Add comprehensive UI tests covering chat interactions and board refresh behavior.
+- [x] Add a sidebar chat widget in the UI.
+- [x] Support sending messages and showing conversation history.
+- [x] Connect the chat to the backend AI flow.
+- [x] Render AI responses in the UI.
+- [x] If the AI returns a valid board update, refresh the board automatically.
+- [x] Add comprehensive UI tests covering chat interactions and board refresh behavior.
 
 Implementation notes:
 - The chat sidebar should be visually consistent with the project color scheme and app style.
