@@ -108,6 +108,18 @@ export default function Home() {
           Log out
         </button>
       </div>
+
+      <div className="flex justify-end px-6 pb-0 pt-2">
+        <div className="rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] px-5 py-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[var(--gray-text)]">
+            Focus
+          </p>
+          <p className="mt-2 text-lg font-semibold text-[var(--primary-blue)]">
+            One board. Five columns. Zero clutter.
+          </p>
+        </div>
+      </div>
+
       <KanbanBoard />
     </div>
   );

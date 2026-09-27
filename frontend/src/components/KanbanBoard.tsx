@@ -7,13 +7,19 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  closestCorners,
+  pointerWithin,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
-import { createId, initialData, moveCard, type BoardData } from "@/lib/kanban";
+import {
+  createId,
+  findColumnId,
+  initialData,
+  moveCard,
+  type BoardData,
+} from "@/lib/kanban";
 
 const getBoardApiUrl = () => {
   if (typeof window === "undefined") {
@@ -42,6 +48,7 @@ const saveBoard = async (board: BoardData) => {
 export const KanbanBoard = () => {
   const [board, setBoard] = useState<BoardData>(initialData);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -90,20 +97,47 @@ export const KanbanBoard = () => {
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveCardId(event.active.id as string);
+    setDragOverColumnId(null);
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    setActiveCardId(null);
-
-    if (!over || active.id === over.id || !board) {
+  const applyMove = (activeId: string, overId: string) => {
+    if (!board) {
       return;
     }
 
     updateBoard((previous) => ({
       ...previous,
-      columns: moveCard(previous.columns, active.id as string, over.id as string),
+      columns: moveCard(previous.columns, activeId, overId),
     }));
+  };
+
+  const handleDragOver = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || !board) {
+      setDragOverColumnId(null);
+      return;
+    }
+
+    const nextColumnId = findColumnId(board.columns, String(over.id));
+    setDragOverColumnId(nextColumnId ?? null);
+
+    if (active.id === over.id) {
+      return;
+    }
+
+    applyMove(String(active.id), String(over.id));
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveCardId(null);
+    setDragOverColumnId(null);
+
+    if (!over || active.id === over.id || !board) {
+      return;
+    }
+
+    applyMove(String(active.id), String(over.id));
   };
 
   const handleRenameColumn = (columnId: string, title: string) => {
@@ -171,14 +205,6 @@ export const KanbanBoard = () => {
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <div className="rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] px-5 py-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[var(--gray-text)]">
-                  Focus
-                </p>
-                <p className="mt-2 text-lg font-semibold text-[var(--primary-blue)]">
-                  One board. Five columns. Zero clutter.
-                </p>
-              </div>
               {isSaving ? (
                 <div className="rounded-full border border-[var(--stroke)] bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--gray-text)]">
                   Saving
@@ -201,8 +227,9 @@ export const KanbanBoard = () => {
 
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCorners}
+          collisionDetection={pointerWithin}
           onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
           <section className="grid gap-6 lg:grid-cols-5">
@@ -211,6 +238,7 @@ export const KanbanBoard = () => {
                 key={column.id}
                 column={column}
                 cards={column.cardIds.map((cardId) => board.cards[cardId])}
+                isDropTarget={dragOverColumnId === column.id}
                 onRename={handleRenameColumn}
                 onAddCard={handleAddCard}
                 onDeleteCard={handleDeleteCard}

@@ -14,17 +14,6 @@ if docker compose ps --services --filter status=running | grep -q .; then
   docker compose down --remove-orphans >/dev/null 2>&1 || true
 fi
 
-docker compose up --build -d
+echo "Starting Docker stack in the foreground. Press Ctrl+C to stop it."
 
-for attempt in $(seq 1 30); do
-  if curl -fsS http://localhost:8000/api/health >/dev/null 2>&1; then
-    echo "Docker stack started."
-    echo "App: http://localhost:8000"
-    exit 0
-  fi
-  sleep 1
-done
-
-echo "Docker container started, but the health endpoint did not become ready in time." >&2
-docker compose logs --tail 50 >&2
-exit 1
+docker compose up --build
