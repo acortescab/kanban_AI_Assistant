@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { KanbanBoard } from "@/components/KanbanBoard";
 import type { BoardSummary } from "@/lib/api";
-import { initialData, newCard, todayIso, type BoardData } from "@/lib/kanban";
-import { createFakeServer, failWith, type FakeServer } from "@/test/fakeServer";
+import { newCard, todayIso, type BoardData } from "@/lib/kanban";
+import { createFakeServer, DEMO_BOARD, failWith, type FakeServer } from "@/test/fakeServer";
 
 const summary: BoardSummary = {
   id: "board-1",
@@ -179,7 +179,7 @@ describe("KanbanBoard", () => {
   });
 
   it("clears a due date", async () => {
-    const data = structuredClone(initialData);
+    const data = structuredClone(DEMO_BOARD);
     data.cards["card-1"].dueDate = "2099-01-15";
     server.boards.get("board-1")!.data = data;
     renderBoard();
@@ -211,7 +211,7 @@ describe("KanbanBoard", () => {
   });
 
   it("shows overdue cards and board stats", async () => {
-    const data = structuredClone(initialData);
+    const data = structuredClone(DEMO_BOARD);
     data.cards["card-1"] = { ...data.cards["card-1"], dueDate: "2000-01-01", priority: "high" };
     data.cards["card-2"] = { ...data.cards["card-2"], dueDate: todayIso() };
     server.boards.get("board-1")!.data = data;
@@ -320,7 +320,7 @@ describe("KanbanBoard", () => {
 
   describe("filtering", () => {
     beforeEach(() => {
-      const data = structuredClone(initialData);
+      const data = structuredClone(DEMO_BOARD);
       data.cards["card-1"] = { ...data.cards["card-1"], priority: "high", labels: ["roadmap"] };
       data.cards["card-4"] = { ...data.cards["card-4"], labels: ["copy"], dueDate: "2000-01-01" };
       server.boards.get("board-1")!.data = data;
@@ -366,7 +366,7 @@ describe("KanbanBoard", () => {
     });
 
     it("hides the label filter when no card has a label", async () => {
-      server.boards.get("board-1")!.data = structuredClone(initialData);
+      server.boards.get("board-1")!.data = structuredClone(DEMO_BOARD);
       renderBoard();
       await screen.findAllByTestId(/^column-/);
 
@@ -439,8 +439,8 @@ describe("KanbanBoard", () => {
 
   it("shows the board returned by the AI", async () => {
     const aiBoard: BoardData = {
-      ...initialData,
-      cards: { ...initialData.cards, "card-1": newCard("card-1", "Changed by AI", "Updated details") },
+      ...DEMO_BOARD,
+      cards: { ...DEMO_BOARD.cards, "card-1": newCard("card-1", "Changed by AI", "Updated details") },
     };
     server.chatReply = { response: "Done.", board: aiBoard };
     renderBoard();
@@ -486,8 +486,8 @@ describe("KanbanBoard", () => {
 
   it("keeps an edit made while the AI was working and refuses the AI's stale change", async () => {
     const aiBoard: BoardData = {
-      ...initialData,
-      cards: { ...initialData.cards, "card-1": newCard("card-1", "Changed by AI") },
+      ...DEMO_BOARD,
+      cards: { ...DEMO_BOARD.cards, "card-1": newCard("card-1", "Changed by AI") },
     };
     server.chatReply = { response: "Done.", board: aiBoard };
     let releaseAi = () => {};
@@ -519,8 +519,8 @@ describe("KanbanBoard", () => {
 
   it("applies the AI's saved board without saving it again, then saves on top of it", async () => {
     const aiBoard: BoardData = {
-      ...initialData,
-      cards: { ...initialData.cards, "card-1": newCard("card-1", "Changed by AI") },
+      ...DEMO_BOARD,
+      cards: { ...DEMO_BOARD.cards, "card-1": newCard("card-1", "Changed by AI") },
     };
     server.chatReply = { response: "Done.", board: aiBoard };
     renderBoard();
@@ -625,7 +625,7 @@ describe("KanbanBoard", () => {
     });
 
     it("filters cards assigned to me", async () => {
-      const data = structuredClone(initialData);
+      const data = structuredClone(DEMO_BOARD);
       data.cards["card-3"].assigneeId = "user-1";
       data.cards["card-5"].assigneeId = aliceId;
       server.boards.get("board-1")!.data = data;
@@ -643,7 +643,7 @@ describe("KanbanBoard", () => {
     });
 
     it("reloads the board after removing a member, so their cards show as unassigned", async () => {
-      const data = structuredClone(initialData);
+      const data = structuredClone(DEMO_BOARD);
       data.cards["card-1"].assigneeId = aliceId;
       server.boards.get("board-1")!.data = data;
       renderBoard();

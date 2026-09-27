@@ -83,7 +83,7 @@ def start_session(response: Response, user: UserModel) -> None:
     )
 
 
-def board_not_found(exc: LookupError) -> HTTPException:
+def not_found(exc: LookupError) -> HTTPException:
     return HTTPException(status_code=404, detail=str(exc))
 
 
@@ -178,7 +178,7 @@ def get_board_summary(board_id: str, user: CurrentUser) -> BoardSummaryModel:
     try:
         return service.get_board_summary(user.id, board_id)
     except LookupError as exc:
-        raise board_not_found(exc) from exc
+        raise not_found(exc) from exc
 
 
 @app.patch("/api/boards/{board_id}")
@@ -186,7 +186,7 @@ def update_board(board_id: str, payload: BoardUpdateModel, user: CurrentUser) ->
     try:
         return service.update_board(user.id, board_id, payload.title, payload.description)
     except LookupError as exc:
-        raise board_not_found(exc) from exc
+        raise not_found(exc) from exc
 
 
 @app.delete("/api/boards/{board_id}", status_code=204)
@@ -194,7 +194,7 @@ def delete_board(board_id: str, user: CurrentUser) -> None:
     try:
         service.delete_board(user.id, board_id)
     except LookupError as exc:
-        raise board_not_found(exc) from exc
+        raise not_found(exc) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -207,7 +207,7 @@ def list_members(board_id: str, user: CurrentUser) -> list[BoardMemberModel]:
     try:
         return service.list_members(user.id, board_id)
     except LookupError as exc:
-        raise board_not_found(exc) from exc
+        raise not_found(exc) from exc
 
 
 @app.post("/api/boards/{board_id}/members", status_code=201)
@@ -215,7 +215,7 @@ def add_member(board_id: str, payload: MemberAddModel, user: CurrentUser) -> lis
     try:
         return service.add_member(user.id, board_id, payload.username)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise not_found(exc) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except service.ConflictError as exc:
@@ -227,7 +227,7 @@ def remove_member(board_id: str, member_id: str, user: CurrentUser) -> None:
     try:
         service.remove_member(user.id, board_id, member_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise not_found(exc) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
@@ -256,7 +256,7 @@ def get_board_data(board_id: str, user: CurrentUser, response: Response) -> Boar
     try:
         board, version = service.read_board(user.id, board_id)
     except LookupError as exc:
-        raise board_not_found(exc) from exc
+        raise not_found(exc) from exc
     set_version(response, version)
     return board
 
@@ -272,7 +272,7 @@ def save_board_data(
     try:
         version = service.save_board_record(user.id, board_id, board, parse_if_match(if_match))
     except LookupError as exc:
-        raise board_not_found(exc) from exc
+        raise not_found(exc) from exc
     except service.VersionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except service.InvalidBoardError as exc:
@@ -286,7 +286,7 @@ def list_activity(board_id: str, user: CurrentUser) -> list[ActivityModel]:
     try:
         return service.list_activity(user.id, board_id)
     except LookupError as exc:
-        raise board_not_found(exc) from exc
+        raise not_found(exc) from exc
 
 
 @app.post("/api/boards/{board_id}/ai/chat")
@@ -296,7 +296,7 @@ def ai_chat(
     try:
         reply, version = generate_structured_ai_response(request, user.id, board_id)
     except LookupError as exc:
-        raise board_not_found(exc) from exc
+        raise not_found(exc) from exc
     except service.VersionConflictError as exc:
         raise HTTPException(
             status_code=409,
@@ -339,7 +339,7 @@ def admin_set_role(user_id: str, payload: RoleUpdateModel, admin: AdminUser) -> 
     try:
         return users.set_role(user_id, payload.role)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise not_found(exc) from exc
 
 
 @app.delete("/api/admin/users/{user_id}", status_code=204)
@@ -351,7 +351,7 @@ def admin_delete_user(user_id: str, admin: AdminUser) -> None:
     try:
         users.delete_user(user_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise not_found(exc) from exc
 
 
 # Mounted last so the API routes above take precedence over the static site.

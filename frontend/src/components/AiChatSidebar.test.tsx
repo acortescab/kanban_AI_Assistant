@@ -2,8 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { AiChatSidebar, MAX_SENT_HISTORY } from "@/components/AiChatSidebar";
-import { initialData } from "@/lib/kanban";
-import { createFakeServer, failWith, type FakeServer } from "@/test/fakeServer";
+import { createFakeServer, DEMO_BOARD, failWith, type FakeServer } from "@/test/fakeServer";
 
 let server: FakeServer;
 
@@ -30,7 +29,7 @@ const sendMessage = async (text: string) => {
 
 describe("AiChatSidebar", () => {
   it("sends the question with history to the board's route and applies the returned board", async () => {
-    server.chatReply = { response: "I moved the card.", board: initialData };
+    server.chatReply = { response: "I moved the card.", board: DEMO_BOARD };
     const { onBoardUpdate } = renderSidebar();
 
     expect(screen.getByText(/ask me to summarize the board/i)).toBeInTheDocument();
@@ -40,7 +39,7 @@ describe("AiChatSidebar", () => {
     expect(screen.getByText("Move card-1 to Done")).toBeInTheDocument();
     expect(await screen.findByText("I moved the card.")).toBeInTheDocument();
     // The version is the one the server saved the AI's board at (from the ETag).
-    expect(onBoardUpdate).toHaveBeenCalledWith(initialData, 1);
+    expect(onBoardUpdate).toHaveBeenCalledWith(DEMO_BOARD, 1);
     expect(server.chatRequests).toEqual([
       {
         boardId: "board-1",

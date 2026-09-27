@@ -21,17 +21,13 @@ def get_openrouter_api_key() -> str:
 def call_openrouter_messages(
     messages: list[dict[str, str]], response_format: dict | None = None
 ) -> str:
-    api_key = get_openrouter_api_key()
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {get_openrouter_api_key()}",
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost:8000",
         "X-Title": "Kanban AI Assistant",
     }
-    payload = {
-        "model": MODEL,
-        "messages": messages,
-    }
+    payload = {"model": MODEL, "messages": messages}
     if response_format is not None:
         payload["response_format"] = response_format
 
@@ -59,19 +55,14 @@ def call_openrouter_messages(
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Could not reach OpenRouter: {exc}") from exc
 
-    data = response.json()
-    choices = data.get("choices") or []
+    choices = response.json().get("choices") or []
     if not choices:
         raise ValueError("OpenRouter response did not include any choices.")
 
-    message = choices[0].get("message", {})
-    content = message.get("content")
+    content = choices[0].get("message", {}).get("content")
     if isinstance(content, list):
         return "".join(
-            part.get("text", "")
-            if isinstance(part, dict)
-            else str(part)
-            for part in content
+            part.get("text", "") if isinstance(part, dict) else str(part) for part in content
         )
     if not isinstance(content, str):
         raise ValueError("OpenRouter response content was not a string.")

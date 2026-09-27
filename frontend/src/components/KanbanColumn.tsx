@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from "react";
 import clsx from "clsx";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -9,7 +10,14 @@ import { NewCardForm } from "@/components/NewCardForm";
 const headerButtonClass =
   "flex h-6 w-5 shrink-0 items-center justify-center rounded-md text-[var(--gray-text)] transition hover:bg-[var(--surface)] hover:text-[var(--navy-dark)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent";
 
-const Chevron = ({ direction }: { direction: "left" | "right" }) => (
+// For inline title inputs that save on blur: Enter commits by blurring.
+export const blurOnEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+  if (event.key === "Enter") {
+    event.currentTarget.blur();
+  }
+};
+
+const Chevron =({ direction }: { direction: "left" | "right" }) => (
   <svg
     viewBox="0 0 24 24"
     className="h-3.5 w-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"
@@ -81,11 +89,7 @@ export const KanbanColumn = ({
           defaultValue={column.title}
           maxLength={100}
           onBlur={(event) => commitTitle(event.currentTarget)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.currentTarget.blur();
-            }
-          }}
+          onKeyDown={blurOnEnter}
           className="min-w-0 flex-1 rounded-md bg-transparent px-1 py-0.5 font-display text-base font-semibold text-[var(--navy-dark)] outline-none transition hover:bg-[var(--surface)] focus:bg-[var(--surface)]"
           aria-label="Column title"
         />
@@ -152,9 +156,7 @@ export const KanbanColumn = ({
           </div>
         )}
       </div>
-      <NewCardForm
-        onAdd={(title, details) => onAddCard(column.id, title, details)}
-      />
+      <NewCardForm onAdd={(title, details) => onAddCard(column.id, title, details)} />
     </section>
   );
 };

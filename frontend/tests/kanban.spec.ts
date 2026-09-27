@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // The backend database is shared by all tests in a run, so each test works on different
 // cards or on its own freshly registered account.
@@ -47,25 +47,24 @@ async function expectSave(page: Page, previous: number) {
   );
 }
 
-async function addCard(page: Page, columnId: string, title: string, details = "") {
-  const column = page.getByTestId(`column-${columnId}`);
+async function addCard(column: Locator, title: string, details = "") {
   await column.getByRole("button", { name: /add a card/i }).click();
   await column.getByPlaceholder("Card title").fill(title);
   if (details) {
     await column.getByPlaceholder("Details").fill(details);
   }
   await column.getByRole("button", { name: /add card/i }).click();
-  return column;
 }
 
+const columns = (page: Page) => page.locator('[data-testid^="column-"]');
+
 // Column ids of a registered user's board are generated, so address columns by position.
-const nthColumn = (page: Page, index: number) =>
-  page.locator('[data-testid^="column-"]').nth(index);
+const nthColumn = (page: Page, index: number) => columns(page).nth(index);
 
 test("requires sign in before loading the board", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await expect(page.locator('[data-testid^="column-"]')).toHaveCount(0);
+  await expect(columns(page)).toHaveCount(0);
 });
 
 test("rejects invalid credentials", async ({ page }) => {
@@ -75,7 +74,7 @@ test("rejects invalid credentials", async ({ page }) => {
   await page.getByRole("button", { name: /sign in/i }).click();
 
   await expect(page.getByText("Invalid username or password.")).toBeVisible();
-  await expect(page.locator('[data-testid^="column-"]')).toHaveCount(0);
+  await expect(columns(page)).toHaveCount(0);
 });
 
 test("the API refuses board access without a session", async ({ request }) => {
@@ -86,7 +85,7 @@ test("the API refuses board access without a session", async ({ request }) => {
 test("keeps the session across reloads and ends it on log out", async ({ page }) => {
   await signIn(page);
   await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
-  await expect(page.locator('[data-testid^="column-"]')).toHaveCount(5);
+  await expect(columns(page)).toHaveCount(5);
 
   await reopen(page);
 
@@ -94,14 +93,15 @@ test("keeps the session across reloads and ends it on log out", async ({ page })
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.reload();
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await expect(page.locator('[data-testid^="column-"]')).toHaveCount(0);
+  await expect(columns(page)).toHaveCount(0);
 });
 
 test("adds a card and persists it", async ({ page }) => {
   await signIn(page);
   const before = await saveCount(page);
 
-  const column = await addCard(page, "col-discovery", "Playwright card", "Added via e2e.");
+  const column = page.getByTestId("column-col-discovery");
+  await addCard(column, "Playwright card", "Added via e2e.");
   await expect(column.getByText("Playwright card")).toBeVisible();
   await expectSave(page, before);
 
@@ -165,7 +165,8 @@ test("deletes a card it created and the delete persists", async ({ page }) => {
   await signIn(page);
   let before = await saveCount(page);
 
-  const column = await addCard(page, "col-review", "Temporary card", "Deleted below.");
+  const column = page.getByTestId("column-col-review");
+  await addCard(column, "Temporary card", "Deleted below.");
   const card = column.locator("article").filter({ hasText: "Temporary card" });
   await expectSave(page, before);
 
@@ -209,7 +210,7 @@ test("moves a card between columns and persists it", async ({ page }) => {
 test("a new user registers, gets a starter board, and can sign back in", async ({ page }) => {
   const username = await register(page, "reg");
   await expect(page.getByTestId("current-user")).toHaveText("reg person");
-  await expect(page.locator('[data-testid^="column-"]')).toHaveCount(5);
+  await expect(columns(page)).toHaveCount(5);
   await expect(page.getByRole("button", { name: "Users" })).toHaveCount(0);
 
   await page.getByRole("button", { name: /log out/i }).click();
@@ -241,15 +242,13 @@ test("manages several boards: create, switch, rename, add columns, delete", asyn
 
   // Cards and columns are per board.
   let before = await saveCount(page);
-  await nthColumn(page, 0).getByRole("button", { name: /add a card/i }).click();
-  await nthColumn(page, 0).getByPlaceholder("Card title").fill("Launch task");
-  await nthColumn(page, 0).getByRole("button", { name: /add card/i }).click();
+  await addCard(nthColumn(page, 0), "Launch task");
   await expectSave(page, before);
 
   before = await saveCount(page);
   await page.getByRole("button", { name: "Add column" }).click();
   await expectSave(page, before);
-  await expect(page.locator('[data-testid^="column-"]')).toHaveCount(6);
+  await expect(columns(page)).toHaveCount(6);
 
   // Rename the board; the header switcher follows.
   await page.getByLabel("Board title").fill("Launch 2026");
@@ -259,7 +258,7 @@ test("manages several boards: create, switch, rename, add columns, delete", asyn
   // Switch back to the first board, which has neither the card nor the extra column.
   await page.getByLabel("Current board").selectOption({ label: "My first board" });
   await expect(page.getByLabel("Board title")).toHaveValue("My first board");
-  await expect(page.locator('[data-testid^="column-"]')).toHaveCount(5);
+  await expect(columns(page)).toHaveCount(5);
   await expect(page.getByText("Launch task")).toHaveCount(0);
 
   // Everything survives a reload, and the last opened board is reopened.
@@ -267,7 +266,7 @@ test("manages several boards: create, switch, rename, add columns, delete", asyn
   await expect(page.getByLabel("Board title")).toHaveValue("My first board");
   await page.getByLabel("Current board").selectOption({ label: "Launch 2026" });
   await expect(page.getByText("Launch task")).toBeVisible();
-  await expect(page.locator('[data-testid^="column-"]')).toHaveCount(6);
+  await expect(columns(page)).toHaveCount(6);
 
   // Delete the first board from the overview.
   page.once("dialog", (dialog) => void dialog.accept());
@@ -347,9 +346,7 @@ test("searches and filters cards", async ({ page }) => {
   await register(page, "filter");
   for (const title of ["Write release notes", "Fix login bug"]) {
     const before = await saveCount(page);
-    await nthColumn(page, 0).getByRole("button", { name: /add a card/i }).click();
-    await nthColumn(page, 0).getByPlaceholder("Card title").fill(title);
-    await nthColumn(page, 0).getByRole("button", { name: /add card/i }).click();
+    await addCard(nthColumn(page, 0), title);
     await expectSave(page, before);
   }
   // By test id: in edit mode the title moves into an input, so a hasText filter stops matching.
@@ -394,24 +391,18 @@ test("shares a board, both users edit it, and a stale edit is refused", async ({
   await other.getByLabel("Current board").selectOption({ index: 1 });
   await expect(other.getByTestId("shared-by")).toHaveText("Shared with you by owner person");
   let before = await saveCount(other);
-  await nthColumn(other, 0).getByRole("button", { name: /add a card/i }).click();
-  await nthColumn(other, 0).getByPlaceholder("Card title").fill("Added by the member");
-  await nthColumn(other, 0).getByRole("button", { name: /add card/i }).click();
+  await addCard(nthColumn(other, 0), "Added by the member");
   await expectSave(other, before);
 
   // The owner's screen is now stale, so their next edit is refused and the latest board shown.
-  await nthColumn(page, 1).getByRole("button", { name: /add a card/i }).click();
-  await nthColumn(page, 1).getByPlaceholder("Card title").fill("Stale edit");
-  await nthColumn(page, 1).getByRole("button", { name: /add card/i }).click();
+  await addCard(nthColumn(page, 1), "Stale edit");
   await expect(page.getByText(/someone else changed this board/i)).toBeVisible();
   await expect(page.getByText("Added by the member")).toBeVisible();
   await expect(page.getByText("Stale edit")).toHaveCount(0);
 
   // Retrying on the fresh board works.
   before = await saveCount(page);
-  await nthColumn(page, 1).getByRole("button", { name: /add a card/i }).click();
-  await nthColumn(page, 1).getByPlaceholder("Card title").fill("Owner retry");
-  await nthColumn(page, 1).getByRole("button", { name: /add card/i }).click();
+  await addCard(nthColumn(page, 1), "Owner retry");
   await expectSave(page, before);
   await other.reload();
   await other.getByLabel("Current board").selectOption({ index: 1 });
@@ -438,9 +429,7 @@ test("assigns a card to a member, reorders columns, and logs the activity", asyn
   await expect(page.getByTestId("board-members")).toContainText("helper person");
 
   let before = await saveCount(page);
-  await nthColumn(page, 0).getByRole("button", { name: /add a card/i }).click();
-  await nthColumn(page, 0).getByPlaceholder("Card title").fill("Draft the plan");
-  await nthColumn(page, 0).getByRole("button", { name: /add card/i }).click();
+  await addCard(nthColumn(page, 0), "Draft the plan");
   await expectSave(page, before);
 
   const cardId = await page.locator("article").filter({ hasText: "Draft the plan" }).getAttribute("data-testid");

@@ -10,9 +10,8 @@ from app.ai_flow import (
     parse_structured_ai_response,
 )
 from app.schemas import AIChatRequestModel, BoardDataModel, ChatMessageModel
-from tests.conftest import DEMO_BOARD
+from tests.conftest import DATA, DEMO_BOARD, fake_model
 
-DATA = f"{DEMO_BOARD}/data"
 CHAT = f"{DEMO_BOARD}/ai/chat"
 
 
@@ -21,18 +20,6 @@ def board(demo) -> dict:
     response = demo.get(DATA)
     assert response.status_code == 200
     return response.json()
-
-
-def fake_openrouter(monkeypatch, reply: dict) -> dict:
-    captured = {}
-
-    def fake_call_openrouter_messages(messages, response_format=None):
-        captured["messages"] = messages
-        captured["response_format"] = response_format
-        return json.dumps(reply)
-
-    monkeypatch.setattr("app.ai_flow.call_openrouter_messages", fake_call_openrouter_messages)
-    return captured
 
 
 def test_build_structured_ai_messages_includes_board_history_and_question(board):
@@ -142,7 +129,7 @@ def test_ai_chat_route_uses_saved_board_and_persists_valid_update(monkeypatch, d
     updated_board["columns"][0]["cardIds"].remove("card-1")
     updated_board["columns"][-1]["cardIds"].append("card-1")
     updated_board["cards"]["card-1"]["priority"] = "high"
-    captured = fake_openrouter(
+    captured = fake_model(
         monkeypatch, {"response": "I moved card-1 to Done.", "board": updated_board}
     )
 
@@ -166,7 +153,7 @@ def test_ai_chat_route_works_on_the_requested_board_only(monkeypatch, demo, boar
     other_data = demo.get(f"/api/boards/{other_id}/data").json()
     updated_other = copy.deepcopy(other_data)
     updated_other["columns"][0]["title"] = "Changed by AI"
-    captured = fake_openrouter(monkeypatch, {"response": "Done.", "board": updated_other})
+    captured = fake_model(monkeypatch, {"response": "Done.", "board": updated_other})
 
     response = demo.post(f"/api/boards/{other_id}/ai/chat", json={"question": "Rename"})
 
@@ -177,7 +164,7 @@ def test_ai_chat_route_works_on_the_requested_board_only(monkeypatch, demo, boar
 
 
 def test_ai_chat_route_returns_404_for_someone_elses_board(monkeypatch, alice, board):
-    fake_openrouter(monkeypatch, {"response": "Hi", "board": None})
+    fake_model(monkeypatch, {"response": "Hi", "board": None})
 
     response = alice.post(CHAT, json={"question": "Hi"})
 
@@ -199,7 +186,7 @@ def test_ai_chat_route_reports_an_unreachable_model_as_503(monkeypatch, demo):
 def test_ai_chat_route_rejects_malformed_board_update(monkeypatch, demo, board):
     invalid_board = copy.deepcopy(board)
     invalid_board["cards"].pop("card-1")
-    fake_openrouter(monkeypatch, {"response": "I tried to move the card.", "board": invalid_board})
+    fake_model(monkeypatch, {"response": "I tried to move the card.", "board": invalid_board})
 
     response = demo.post(CHAT, json={"question": "Move card-1 to Done"})
 
@@ -219,7 +206,7 @@ def test_ai_chat_route_rejects_a_board_that_drops_cards(monkeypatch, demo, board
     for column in wiped_board["columns"]:
         column["cardIds"] = []
     wiped_board["cards"] = {}
-    fake_openrouter(monkeypatch, {"response": "I cleared the board.", "board": wiped_board})
+    fake_model(monkeypatch, {"response": "I cleared the board.", "board": wiped_board})
 
     response = demo.post(CHAT, json={"question": "Delete everything"})
 
@@ -232,7 +219,7 @@ def test_ai_chat_route_rejects_a_board_that_drops_a_single_card(monkeypatch, dem
     lossy_board = copy.deepcopy(board)
     lossy_board["columns"][0]["cardIds"].remove("card-1")
     del lossy_board["cards"]["card-1"]
-    fake_openrouter(monkeypatch, {"response": "I tidied up.", "board": lossy_board})
+    fake_model(monkeypatch, {"response": "I tidied up.", "board": lossy_board})
 
     response = demo.post(CHAT, json={"question": "Remove card-1"})
 
@@ -257,7 +244,7 @@ def test_ai_chat_route_allows_adding_editing_moving_and_new_columns(monkeypatch,
     added_board["columns"][2]["cardIds"].append(added_board["columns"][0]["cardIds"].pop(0))
     added_board["columns"][0]["title"] = "Icebox"
     added_board["columns"].append({"id": "col-blocked", "title": "Blocked", "cardIds": []})
-    fake_openrouter(monkeypatch, {"response": "I updated the board.", "board": added_board})
+    fake_model(monkeypatch, {"response": "I updated the board.", "board": added_board})
 
     response = demo.post(CHAT, json={"question": "Add and move a card"})
 

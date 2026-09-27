@@ -6,7 +6,7 @@ import pytest
 from app import database
 from app.main import SESSION_COOKIE
 from app.security import hash_password, verify_password
-from tests.conftest import registered_client, signed_in_client
+from tests.conftest import registered_client, signed_in_client, user_id
 
 
 def test_password_hashes_are_salted_and_verifiable():
@@ -212,8 +212,7 @@ def test_the_only_admin_cannot_delete_their_account(demo):
 
 
 def test_an_admin_can_delete_their_account_when_another_admin_exists(demo, alice):
-    alice_id = alice.get("/api/auth/me").json()["id"]
-    assert demo.patch(f"/api/admin/users/{alice_id}", json={"role": "admin"}).status_code == 200
+    assert demo.patch(f"/api/admin/users/{user_id(alice)}", json={"role": "admin"}).status_code == 200
 
     response = demo.request("DELETE", "/api/auth/me", json={"password": "password"})
 

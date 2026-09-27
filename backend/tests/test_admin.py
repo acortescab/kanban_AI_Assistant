@@ -1,10 +1,7 @@
 import pytest
 
 from app.database import get_connection
-
-
-def user_id(client) -> str:
-    return client.get("/api/auth/me").json()["id"]
+from tests.conftest import user_id
 
 
 @pytest.mark.parametrize(

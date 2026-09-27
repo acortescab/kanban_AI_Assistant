@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { api } from "@/lib/api";
+import { useState, type FormEvent } from "react";
+import { api, errorMessage } from "@/lib/api";
 import { createId, type BoardData } from "@/lib/kanban";
 
 type ChatMessage = {
@@ -27,20 +27,14 @@ export const AiChatSidebar = ({ boardId, waitForSaves, onBoardUpdate }: AiChatSi
     {
       id: createId("msg"),
       role: "assistant",
-      content:
-        "Ask me to summarize the board, rename columns, or move cards for you.",
+      content: "Ask me to summarize the board, rename columns, or move cards for you.",
     },
   ]);
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState("");
 
-  const conversationHistory = useMemo(
-    () => messages.slice(-MAX_SENT_HISTORY).map(({ role, content }) => ({ role, content })),
-    [messages]
-  );
-
-  const sendMessage = async (event: React.FormEvent<HTMLFormElement>) => {
+  const sendMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const question = draft.trim();
@@ -48,40 +42,27 @@ export const AiChatSidebar = ({ boardId, waitForSaves, onBoardUpdate }: AiChatSi
       return;
     }
 
-    const userMessage: ChatMessage = {
-      id: createId("msg"),
-      role: "user",
-      content: question,
-    };
-
-    const nextMessages = [...messages, userMessage];
-    setMessages(nextMessages);
+    // The history is the conversation before this question.
+    const history = messages.slice(-MAX_SENT_HISTORY).map(({ role, content }) => ({ role, content }));
+    setMessages([...messages, { id: createId("msg"), role: "user", content: question }]);
     setDraft("");
     setError("");
     setIsSending(true);
 
     try {
       await waitForSaves();
-      const data = await api.chat(boardId, question, conversationHistory);
+      const data = await api.chat(boardId, question, history);
 
       setMessages((previous) => [
         ...previous,
-        {
-          id: createId("msg"),
-          role: "assistant",
-          content: data.response,
-        },
+        { id: createId("msg"), role: "assistant", content: data.response },
       ]);
 
       if (data.board) {
         onBoardUpdate(data.board, data.version);
       }
-    } catch (caughtError) {
-      setError(
-        caughtError instanceof Error && caughtError.message
-          ? caughtError.message
-          : "Unable to send your message right now."
-      );
+    } catch (caught) {
+      setError(errorMessage(caught, "Unable to send your message right now."));
     } finally {
       setIsSending(false);
     }

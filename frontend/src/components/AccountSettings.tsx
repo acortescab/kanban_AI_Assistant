@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { api, type User } from "@/lib/api";
+import { api, errorMessage, type User } from "@/lib/api";
 
 type AccountSettingsProps = {
   user: User;
@@ -15,9 +15,6 @@ const inputClass =
   "w-full rounded-lg border border-[rgba(3,33,71,0.15)] bg-white px-3 py-2 text-sm text-[var(--navy-dark)] outline-none transition focus:border-[var(--primary-blue)]";
 const buttonClass =
   "rounded-full bg-[var(--secondary-purple)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:brightness-110 disabled:opacity-70";
-
-const errorMessage = (caught: unknown) =>
-  caught instanceof Error ? caught.message : "Something went wrong.";
 
 const StatusLine = ({ status }: { status: Status }) =>
   status ? (

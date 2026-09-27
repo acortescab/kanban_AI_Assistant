@@ -273,8 +273,6 @@ def list_activity(user_id: str, board_id: str, limit: int = 50) -> list[Activity
 # --- Board data --------------------------------------------------------------
 
 
-
-
 def _read_data(conn: sqlite3.Connection, board_id: str) -> BoardDataModel:
     column_rows = conn.execute(
         "SELECT id, title FROM board_columns WHERE board_id = ? ORDER BY sort_order",
@@ -336,10 +334,9 @@ def save_board_record(
     with get_connection() as conn:
         _require_board(conn, user_id, board_id)
         participants = _participants(conn, board_id)
-        strangers = sorted(
-            {card.assigneeId for card in board.cards.values() if card.assigneeId} - set(participants)
-        )
-        if strangers:
+        if any(
+            card.assigneeId and card.assigneeId not in participants for card in board.cards.values()
+        ):
             raise InvalidBoardError("Cards can only be assigned to people on the board.")
 
         # Check and bump in one statement, before anything else is written. That takes the
