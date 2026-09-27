@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { api } from "@/lib/api";
 import { createId, type BoardData } from "@/lib/kanban";
 
 type ChatMessage = {
@@ -10,25 +11,18 @@ type ChatMessage = {
 };
 
 type AiChatSidebarProps = {
+  boardId: string;
   // Resolves once the board's queued saves are written, so the AI sees the latest board.
   waitForSaves: () => Promise<void>;
-  onBoardUpdate: (board: BoardData) => void;
+  // The AI has already saved the board; version is the one it was saved at.
+  onBoardUpdate: (board: BoardData, version: number) => void;
 };
 
-const readErrorDetail = async (response: Response) => {
-  try {
-    const body = (await response.json()) as { detail?: string };
-    if (typeof body.detail === "string" && body.detail.trim()) {
-      return body.detail;
-    }
-  } catch {
-    // Fall back to a generic message below.
-  }
+// The backend only uses the last 20 messages and rejects more than 40, so a long
+// conversation must not send its whole history.
+export const MAX_SENT_HISTORY = 20;
 
-  return "Unable to send your message right now.";
-};
-
-export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProps) => {
+export const AiChatSidebar = ({ boardId, waitForSaves, onBoardUpdate }: AiChatSidebarProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: createId("msg"),
@@ -42,7 +36,7 @@ export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProp
   const [error, setError] = useState("");
 
   const conversationHistory = useMemo(
-    () => messages.map(({ role, content }) => ({ role, content })),
+    () => messages.slice(-MAX_SENT_HISTORY).map(({ role, content }) => ({ role, content })),
     [messages]
   );
 
@@ -68,25 +62,7 @@ export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProp
 
     try {
       await waitForSaves();
-      const response = await fetch("/api/ai/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question,
-          history: conversationHistory,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(await readErrorDetail(response));
-      }
-
-      const data = (await response.json()) as {
-        response: string;
-        board: BoardData | null;
-      };
+      const data = await api.chat(boardId, question, conversationHistory);
 
       setMessages((previous) => [
         ...previous,
@@ -98,7 +74,7 @@ export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProp
       ]);
 
       if (data.board) {
-        onBoardUpdate(data.board);
+        onBoardUpdate(data.board, data.version);
       }
     } catch (caughtError) {
       setError(
@@ -112,21 +88,18 @@ export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProp
   };
 
   return (
-    <aside className="sticky top-6 flex h-fit flex-col rounded-[32px] border border-[var(--stroke)] bg-white/85 p-5 shadow-[var(--shadow)] backdrop-blur">
-      <div className="rounded-2xl border border-[var(--stroke)] bg-[linear-gradient(135deg,rgba(32,157,215,0.08),rgba(117,57,145,0.08))] p-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[var(--gray-text)]">
-          AI Sidebar
-        </p>
-        <h2 className="mt-2 font-display text-2xl font-semibold text-[var(--navy-dark)]">
-          Chat with the board
+    <aside className="flex flex-col rounded-2xl border border-[var(--stroke)] bg-white p-4 shadow-[0_8px_24px_rgba(3,33,71,0.06)] lg:w-[340px] lg:shrink-0 xl:w-[380px]">
+      <div className="border-b-2 border-[var(--secondary-purple)] pb-2">
+        <h2 className="font-display text-base font-semibold text-[var(--navy-dark)]">
+          AI Assistant
         </h2>
-        <p className="mt-2 text-sm leading-6 text-[var(--gray-text)]">
-          Ask for summaries, changes, or quick actions. Board updates refresh automatically.
+        <p className="mt-0.5 text-xs text-[var(--gray-text)]">
+          Ask for summaries or changes. The board updates automatically.
         </p>
       </div>
 
       <div
-        className="mt-4 flex min-h-[320px] flex-1 flex-col gap-3 overflow-y-auto rounded-3xl border border-[var(--stroke)] bg-[var(--surface)] p-4"
+        className="mt-3 flex min-h-[240px] flex-1 flex-col gap-2 overflow-y-auto rounded-xl bg-[var(--surface)] p-3 lg:min-h-0"
         aria-label="AI conversation"
         aria-live="polite"
       >
@@ -135,8 +108,8 @@ export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProp
             key={message.id}
             className={
               message.role === "user"
-                ? "ml-auto max-w-[85%] rounded-2xl bg-[var(--secondary-purple)] px-4 py-3 text-sm text-white"
-                : "mr-auto max-w-[85%] rounded-2xl border border-[var(--stroke)] bg-white px-4 py-3 text-sm text-[var(--navy-dark)]"
+                ? "ml-auto max-w-[85%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-[var(--secondary-purple)] px-3 py-2 text-sm text-white"
+                : "mr-auto max-w-[85%] whitespace-pre-wrap break-words rounded-xl rounded-bl-sm border border-[var(--stroke)] bg-white px-3 py-2 text-sm text-[var(--navy-dark)]"
             }
           >
             {message.content}
@@ -150,7 +123,7 @@ export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProp
         </p>
       ) : null}
 
-      <form onSubmit={sendMessage} className="mt-4 space-y-3">
+      <form onSubmit={sendMessage} className="mt-3 space-y-2">
         <label htmlFor="ai-prompt" className="sr-only">
           Message to AI
         </label>
@@ -159,13 +132,13 @@ export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProp
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Ask me to move a card or explain the board..."
-          rows={4}
-          className="w-full rounded-2xl border border-[var(--stroke)] bg-white px-4 py-3 text-sm text-[var(--navy-dark)] outline-none transition placeholder:text-[var(--gray-text)] focus:border-[var(--primary-blue)]"
+          rows={3}
+          className="w-full resize-none rounded-xl border border-[rgba(3,33,71,0.15)] bg-white px-3 py-2 text-sm text-[var(--navy-dark)] outline-none transition placeholder:text-[var(--gray-text)] focus:border-[var(--primary-blue)]"
         />
         <button
           type="submit"
           disabled={isSending}
-          className="w-full rounded-full bg-[var(--secondary-purple)] px-4 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+          className="w-full rounded-full bg-[var(--secondary-purple)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
         >
           {isSending ? "Sending" : "Send message"}
         </button>

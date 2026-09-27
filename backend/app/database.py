@@ -5,7 +5,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.security import hash_password
+
 DB_PATH = Path(os.getenv("KANBAN_DB_PATH", Path(__file__).resolve().parent / "kanban.db"))
+
+DEMO_USER_ID = "user-1"
+DEMO_BOARD_ID = "board-1"
 
 
 def get_now_iso() -> str:
@@ -26,77 +31,148 @@ def get_connection() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+SCHEMA = [
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT,
+        created_at TEXT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
+        role TEXT NOT NULL DEFAULT 'user'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS boards (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS board_members (
+        board_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        PRIMARY KEY(board_id, user_id),
+        FOREIGN KEY(board_id) REFERENCES boards(id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """,
+    # The actor is stored by name, not as a foreign key, so history outlives deleted accounts.
+    """
+    CREATE TABLE IF NOT EXISTS activity (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        board_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(board_id) REFERENCES boards(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS board_columns (
+        id TEXT NOT NULL,
+        board_id TEXT NOT NULL,
+        column_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        sort_order INTEGER NOT NULL,
+        PRIMARY KEY(board_id, id),
+        FOREIGN KEY(board_id) REFERENCES boards(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS cards (
+        id TEXT NOT NULL,
+        board_id TEXT NOT NULL,
+        column_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        sort_order INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        priority TEXT NOT NULL DEFAULT 'medium',
+        due_date TEXT,
+        labels TEXT NOT NULL DEFAULT '[]',
+        assignee_id TEXT,
+        PRIMARY KEY(board_id, id),
+        FOREIGN KEY(board_id) REFERENCES boards(id),
+        FOREIGN KEY(board_id, column_id) REFERENCES board_columns(board_id, id)
+    )
+    """,
+]
+
+# Columns added after the MVP. CREATE TABLE IF NOT EXISTS leaves an existing table alone,
+# so databases created before these existed get them added here.
+ADDED_COLUMNS = {
+    "users": {
+        "display_name": "TEXT NOT NULL DEFAULT ''",
+        "role": "TEXT NOT NULL DEFAULT 'user'",
+    },
+    "boards": {
+        "description": "TEXT NOT NULL DEFAULT ''",
+        "version": "INTEGER NOT NULL DEFAULT 0",
+    },
+    "cards": {
+        "priority": "TEXT NOT NULL DEFAULT 'medium'",
+        "due_date": "TEXT",
+        "labels": "TEXT NOT NULL DEFAULT '[]'",
+        "assignee_id": "TEXT",
+    },
+}
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    for table, columns in ADDED_COLUMNS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, definition in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
 def init_database() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_connection() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS boards (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS board_columns (
-                id TEXT NOT NULL,
-                board_id TEXT NOT NULL,
-                column_key TEXT NOT NULL,
-                title TEXT NOT NULL,
-                sort_order INTEGER NOT NULL,
-                PRIMARY KEY(board_id, id),
-                FOREIGN KEY(board_id) REFERENCES boards(id)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS cards (
-                id TEXT NOT NULL,
-                board_id TEXT NOT NULL,
-                column_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                details TEXT NOT NULL DEFAULT '',
-                sort_order INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY(board_id, id),
-                FOREIGN KEY(board_id) REFERENCES boards(id),
-                FOREIGN KEY(board_id, column_id) REFERENCES board_columns(board_id, id)
-            )
-            """
-        )
+        for statement in SCHEMA:
+            conn.execute(statement)
+        _add_missing_columns(conn)
 
-        user_id = "user-1"
-        username = "user"
         created_at = get_now_iso()
-        conn.execute(
-            "INSERT OR IGNORE INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, username, None, created_at),
-        )
-
-        board_id = "board-1"
-        board_created = conn.execute(
-            "INSERT OR IGNORE INTO boards (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (board_id, user_id, "Project Board", created_at, created_at),
-        ).rowcount
-        if board_created:
-            _seed_board(conn, board_id, created_at)
+        demo_user = conn.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (DEMO_USER_ID,)
+        ).fetchone()
+        if demo_user is None:
+            conn.execute(
+                "INSERT INTO users (id, username, password_hash, created_at, display_name, role) "
+                "VALUES (?, 'user', ?, ?, 'Demo User', 'admin')",
+                (DEMO_USER_ID, hash_password("password"), created_at),
+            )
+            # Seeded once with the user, so a board the demo user deletes stays deleted.
+            conn.execute(
+                "INSERT INTO boards (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (DEMO_BOARD_ID, DEMO_USER_ID, "Project Board", created_at, created_at),
+            )
+            _seed_board(conn, DEMO_BOARD_ID, created_at)
+        elif demo_user["password_hash"] is None:
+            # MVP databases stored the demo user without a password (login was frontend-only).
+            conn.execute(
+                "UPDATE users SET password_hash = ?, role = 'admin' WHERE id = ?",
+                (hash_password("password"), DEMO_USER_ID),
+            )
 
 
 SEED_COLUMNS = [
