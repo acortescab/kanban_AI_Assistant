@@ -1,8 +1,29 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import Home from "@/app/page";
 import { KanbanBoard } from "@/components/KanbanBoard";
 
 const getFirstColumn = () => screen.getAllByTestId(/column-/i)[0];
+
+describe("Kanban app authentication", () => {
+  it("requires sign in before showing the board", () => {
+    render(<Home />);
+
+    expect(screen.getByRole("heading", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.queryByTestId(/column-/i)).not.toBeInTheDocument();
+  });
+
+  it("allows a user to sign in and shows the board", async () => {
+    render(<Home />);
+
+    await userEvent.type(screen.getByLabelText("Username"), "user");
+    await userEvent.type(screen.getByLabelText("Password"), "password");
+    await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(screen.getByRole("heading", { name: /kanban studio/i })).toBeInTheDocument();
+    expect(screen.getAllByTestId(/column-/i)).toHaveLength(5);
+  });
+});
 
 describe("KanbanBoard", () => {
   it("renders five columns", () => {

@@ -1,0 +1,1 @@
+"""Kanban backend application package."""
