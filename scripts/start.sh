@@ -9,6 +9,11 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+if docker compose ps --services --filter status=running | grep -q .; then
+  echo "Stopping existing Docker stack before restart..."
+  docker compose down --remove-orphans >/dev/null 2>&1 || true
+fi
+
 docker compose up --build -d
 
 for attempt in $(seq 1 30); do

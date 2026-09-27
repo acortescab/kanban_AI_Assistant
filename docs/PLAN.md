@@ -86,12 +86,12 @@ Success criteria:
 Goal: gate access to the Kanban behind a simple login screen using the dummy credentials user / password.
 
 Checklist:
-- [ ] Add a login screen that appears when visiting / before authentication.
-- [ ] Accept the hardcoded credentials user and password.
-- [ ] Show the board only after successful authentication.
-- [ ] Allow the user to log out and return to the login screen.
-- [ ] Maintain the MVP assumption that only one local user is supported.
-- [ ] Add tests for successful login, failed login, and logout flow.
+- [x] Add a login screen that appears when visiting / before authentication.
+- [x] Accept the hardcoded credentials user and password.
+- [x] Show the board only after successful authentication.
+- [x] Allow the user to log out and return to the login screen.
+- [x] Maintain the MVP assumption that only one local user is supported.
+- [x] Add tests for successful login, failed login, and logout flow.
 
 Implementation notes:
 - This is a fake sign-in experience only; no full auth system or database auth table is needed.
@@ -114,24 +114,31 @@ Success criteria:
 Goal: define the persisted Kanban model for future backend integration and obtain user sign-off before implementation.
 
 Checklist:
-- [ ] Define the Kanban data model for users, board data, columns, cards, and relationship structure.
-- [ ] Save the schema proposal as JSON in docs/.
-- [ ] Document the database approach and assumptions in project documentation.
-- [ ] Confirm the schema supports multiple users in the future while the MVP remains single-user.
-- [ ] Get explicit user sign-off on the schema before backend persistence logic is built.
+- [x] Define the Kanban data model for users, board data, columns, cards, and relationship structure.
+- [x] Save the schema proposal as JSON in docs/.
+- [x] Document the database approach and assumptions in project documentation.
+- [x] Confirm the schema supports multiple users in the future while the MVP remains single-user.
+- [x] Get explicit user sign-off on the schema before backend persistence logic is built.
 
 Implementation notes:
 - Use SQLite as the database engine, with schema designed for future extension.
 - Keep the MVP simplified to one board per user while making the base structure ready for multiple users.
+- The board data model tracks a single active user in the MVP, while the schema remains capable of expansion to multiple users and multiple boards over time.
 
 Tests / validation:
 - Check that the schema can represent the board state and user data without ambiguity.
 - Confirm the JSON proposal matches the actual planned API payloads.
+- Verify the schema is consistent with the existing frontend board structure and the eventual backend persistence contract.
 
 Success criteria:
 - The schema is documented clearly.
 - The user approves the database direction before backend integration work begins.
 - The planned schema aligns with the app’s functional requirements.
+
+Approved schema proposal:
+- See docs/kanban_schema.json for the persisted model and relationship structure.
+- The app uses a `users` table, a `boards` table, a `board_columns` table, and a `cards` table.
+- Each user can own one board in the MVP, with the data model ready for future multi-board and multi-user expansion.
 
 ---
 
@@ -140,16 +147,17 @@ Success criteria:
 Goal: add backend routes to read and modify the Kanban for one user, creating the SQLite database if it does not already exist.
 
 Checklist:
-- [ ] Design the backend API contract for reading and updating board state.
-- [ ] Implement SQLite initialization with automatic database creation.
-- [ ] Add routes for fetching the board for a signed-in user.
-- [ ] Add routes for updating the board and toggling card or column state.
-- [ ] Add backend unit tests covering success and failure cases.
-- [ ] Ensure the API handles missing data safely and creates storage when needed.
+- [x] Design the backend API contract for reading and updating board state.
+- [x] Implement SQLite initialization with automatic database creation.
+- [x] Add routes for fetching the board for a signed-in user.
+- [x] Add routes for updating the board and toggling card or column state.
+- [x] Add backend unit tests covering success and failure cases.
+- [x] Ensure the API handles missing data safely and creates storage when needed.
 
 Implementation notes:
 - The board should be persisted for the active user.
 - The API should be structured to support future multi-user data access without redesigning the whole backend.
+- The board contract uses the same JSON shape as the frontend board model: columns and a cards object keyed by card id.
 
 Tests / validation:
 - Unit tests for database initialization.
@@ -178,6 +186,7 @@ Checklist:
 Implementation notes:
 - Maintain the existing UI experience, but store board state in the backend.
 - Use the same board model on both frontend and backend to keep the contract simple.
+- For the MVP, the frontend should call the backend endpoints once the user logs in and persist the board state after each discrete update.
 
 Tests / validation:
 - Frontend tests for loading state.
