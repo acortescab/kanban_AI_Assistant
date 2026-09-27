@@ -3,9 +3,7 @@ import sqlite3
 import pytest
 
 from app.database import get_connection, init_database
-from tests.conftest import DEMO_BOARD
-
-DATA = f"{DEMO_BOARD}/data"
+from tests.conftest import DATA, DEMO_BOARD
 
 
 def card(card_id, title="A card", **fields):

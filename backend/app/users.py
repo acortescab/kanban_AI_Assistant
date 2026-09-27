@@ -25,6 +25,10 @@ def _to_user(row: sqlite3.Row) -> UserModel:
     )
 
 
+def _load_user(conn: sqlite3.Connection, user_id: str) -> UserModel:
+    return _to_user(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+
+
 def create_user(username: str, password: str, display_name: str) -> UserModel:
     user_id = f"user-{uuid.uuid4().hex[:12]}"
     now = get_now_iso()
@@ -40,8 +44,7 @@ def create_user(username: str, password: str, display_name: str) -> UserModel:
             (user_id, username, hash_password(password), now, display_name.strip()),
         )
         create_board_in(conn, user_id, STARTER_BOARD_TITLE, "")
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    return _to_user(row)
+        return _load_user(conn, user_id)
 
 
 def authenticate(username: str, password: str) -> UserModel | None:
@@ -93,8 +96,7 @@ def update_display_name(user_id: str, display_name: str) -> UserModel:
         conn.execute(
             "UPDATE users SET display_name = ? WHERE id = ?", (display_name.strip(), user_id)
         )
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    return _to_user(row)
+        return _load_user(conn, user_id)
 
 
 def change_password(user_id: str, current_password: str, new_password: str, keep_token: str) -> None:
@@ -145,5 +147,4 @@ def set_role(user_id: str, role: str) -> UserModel:
         updated = conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id)).rowcount
         if not updated:
             raise LookupError("User not found")
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    return _to_user(row)
+        return _load_user(conn, user_id)

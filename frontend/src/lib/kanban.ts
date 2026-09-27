@@ -28,6 +28,9 @@ export const MAX_LABEL_LENGTH = 30;
 
 export const PRIORITIES: Priority[] = ["low", "medium", "high"];
 
+export const priorityLabel = (priority: Priority) =>
+  priority[0].toUpperCase() + priority.slice(1);
+
 export const newCard = (
   id: string,
   title: string,
@@ -115,7 +118,7 @@ export const boardLabels = (board: BoardData) =>
     a.localeCompare(b)
   );
 
-export const addColumn =(board: BoardData, id: string, title: string): BoardData => ({
+export const addColumn = (board: BoardData, id: string, title: string): BoardData => ({
   ...board,
   columns: [...board.columns, { id, title, cardIds: [] }],
 });
@@ -149,145 +152,56 @@ export const removeColumn = (board: BoardData, columnId: string): BoardData => (
   ),
 });
 
-export const initialData: BoardData = {
-  columns: [
-    { id: "col-backlog", title: "Backlog", cardIds: ["card-1", "card-2"] },
-    { id: "col-discovery", title: "Discovery", cardIds: ["card-3"] },
-    {
-      id: "col-progress",
-      title: "In Progress",
-      cardIds: ["card-4", "card-5"],
-    },
-    { id: "col-review", title: "Review", cardIds: ["card-6"] },
-    { id: "col-done", title: "Done", cardIds: ["card-7", "card-8"] },
-  ],
-  cards: {
-    "card-1": newCard(
-      "card-1",
-      "Align roadmap themes",
-      "Draft quarterly themes with impact statements and metrics."
-    ),
-    "card-2": newCard(
-      "card-2",
-      "Gather customer signals",
-      "Review support tags, sales notes, and churn feedback."
-    ),
-    "card-3": newCard(
-      "card-3",
-      "Prototype analytics view",
-      "Sketch initial dashboard layout and key drill-downs."
-    ),
-    "card-4": newCard(
-      "card-4",
-      "Refine status language",
-      "Standardize column labels and tone across the board."
-    ),
-    "card-5": newCard(
-      "card-5",
-      "Design card layout",
-      "Add hierarchy and spacing for scanning dense lists."
-    ),
-    "card-6": newCard("card-6", "QA micro-interactions", "Verify hover, focus, and loading states."),
-    "card-7": newCard(
-      "card-7",
-      "Ship marketing page",
-      "Final copy approved and asset pack delivered."
-    ),
-    "card-8": newCard(
-      "card-8",
-      "Close onboarding sprint",
-      "Document release notes and share internally."
-    ),
-  },
-};
+// A drop target id is either a column's own id or the id of a card inside it.
+const findColumn = (columns: Column[], id: string) =>
+  columns.find((column) => column.id === id) ??
+  columns.find((column) => column.cardIds.includes(id));
 
-const isColumnId = (columns: Column[], id: string) =>
-  columns.some((column) => column.id === id);
+export const findColumnId = (columns: Column[], id: string) => findColumn(columns, id)?.id;
 
-export const findColumnId = (columns: Column[], id: string) => {
-  if (isColumnId(columns, id)) {
-    return id;
-  }
-  return columns.find((column) => column.cardIds.includes(id))?.id;
-};
+const withCardIds = (columns: Column[], cardIds: Record<string, string[]>) =>
+  columns.map((column) =>
+    Object.hasOwn(cardIds, column.id) ? { ...column, cardIds: cardIds[column.id] } : column
+  );
 
-export const moveCard = (
-  columns: Column[],
-  activeId: string,
-  overId: string
-): Column[] => {
-  const activeColumnId = findColumnId(columns, activeId);
-  const overColumnId = findColumnId(columns, overId);
-
-  if (!activeColumnId || !overColumnId) {
-    return columns;
-  }
-
-  const activeColumn = columns.find((column) => column.id === activeColumnId);
-  const overColumn = columns.find((column) => column.id === overColumnId);
-
+// Dropping on a column appends the card; dropping on a card takes that card's place.
+export const moveCard = (columns: Column[], activeId: string, overId: string): Column[] => {
+  const activeColumn = findColumn(columns, activeId);
+  const overColumn = findColumn(columns, overId);
   if (!activeColumn || !overColumn) {
     return columns;
   }
+  const isOverColumn = overColumn.id === overId;
 
-  const isOverColumn = isColumnId(columns, overId);
-
-  if (activeColumnId === overColumnId) {
+  if (activeColumn.id === overColumn.id) {
     if (isOverColumn) {
-      const nextCardIds = activeColumn.cardIds.filter(
-        (cardId) => cardId !== activeId
-      );
-      nextCardIds.push(activeId);
-      return columns.map((column) =>
-        column.id === activeColumnId
-          ? { ...column, cardIds: nextCardIds }
-          : column
-      );
+      const nextCardIds = [...activeColumn.cardIds.filter((cardId) => cardId !== activeId), activeId];
+      return withCardIds(columns, { [activeColumn.id]: nextCardIds });
     }
 
     const oldIndex = activeColumn.cardIds.indexOf(activeId);
     const newIndex = activeColumn.cardIds.indexOf(overId);
-
-    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
+    if (oldIndex === -1 || oldIndex === newIndex) {
       return columns;
     }
-
     const nextCardIds = [...activeColumn.cardIds];
     nextCardIds.splice(oldIndex, 1);
     nextCardIds.splice(newIndex, 0, activeId);
-
-    return columns.map((column) =>
-      column.id === activeColumnId
-        ? { ...column, cardIds: nextCardIds }
-        : column
-    );
+    return withCardIds(columns, { [activeColumn.id]: nextCardIds });
   }
 
-  const activeIndex = activeColumn.cardIds.indexOf(activeId);
-  if (activeIndex === -1) {
+  if (!activeColumn.cardIds.includes(activeId)) {
     return columns;
   }
-
-  const nextActiveCardIds = [...activeColumn.cardIds];
-  nextActiveCardIds.splice(activeIndex, 1);
-
   const nextOverCardIds = [...overColumn.cardIds];
-  if (isOverColumn) {
-    nextOverCardIds.push(activeId);
-  } else {
-    const overIndex = overColumn.cardIds.indexOf(overId);
-    const insertIndex = overIndex === -1 ? nextOverCardIds.length : overIndex;
-    nextOverCardIds.splice(insertIndex, 0, activeId);
-  }
-
-  return columns.map((column) => {
-    if (column.id === activeColumnId) {
-      return { ...column, cardIds: nextActiveCardIds };
-    }
-    if (column.id === overColumnId) {
-      return { ...column, cardIds: nextOverCardIds };
-    }
-    return column;
+  nextOverCardIds.splice(
+    isOverColumn ? nextOverCardIds.length : nextOverCardIds.indexOf(overId),
+    0,
+    activeId
+  );
+  return withCardIds(columns, {
+    [activeColumn.id]: activeColumn.cardIds.filter((cardId) => cardId !== activeId),
+    [overColumn.id]: nextOverCardIds,
   });
 };
 

@@ -1,6 +1,13 @@
 import { vi } from "vitest";
-import type { ActivityEntry, AdminUser, BoardMember, BoardSummary, User } from "@/lib/api";
-import { initialData, type BoardData } from "@/lib/kanban";
+import {
+  personName,
+  type ActivityEntry,
+  type AdminUser,
+  type BoardMember,
+  type BoardSummary,
+  type User,
+} from "@/lib/api";
+import { newCard, type BoardData } from "@/lib/kanban";
 
 // An in-memory stand-in for the FastAPI backend, installed as global.fetch. It follows the
 // real routes and rules closely enough for component tests to exercise whole flows,
@@ -47,6 +54,29 @@ export const DEMO_USER: User = {
   displayName: "Demo User",
   role: "admin",
   createdAt: NOW,
+};
+
+// Mirrors the board the backend seeds for the demo user (board-1).
+export const DEMO_BOARD: BoardData = {
+  columns: [
+    { id: "col-backlog", title: "Backlog", cardIds: ["card-1", "card-2"] },
+    { id: "col-discovery", title: "Discovery", cardIds: ["card-3"] },
+    { id: "col-progress", title: "In Progress", cardIds: ["card-4", "card-5"] },
+    { id: "col-review", title: "Review", cardIds: ["card-6"] },
+    { id: "col-done", title: "Done", cardIds: ["card-7", "card-8"] },
+  ],
+  cards: Object.fromEntries(
+    [
+      ["card-1", "Align roadmap themes", "Draft quarterly themes with impact statements and metrics."],
+      ["card-2", "Gather customer signals", "Review support tags, sales notes, and churn feedback."],
+      ["card-3", "Prototype analytics view", "Sketch initial dashboard layout and key drill-downs."],
+      ["card-4", "Refine status language", "Standardize column labels and tone across the board."],
+      ["card-5", "Design card layout", "Add hierarchy and spacing for scanning dense lists."],
+      ["card-6", "QA micro-interactions", "Verify hover, focus, and loading states."],
+      ["card-7", "Ship marketing page", "Final copy approved and asset pack delivered."],
+      ["card-8", "Close onboarding sprint", "Document release notes and share internally."],
+    ].map(([id, title, details]) => [id, newCard(id, title, details)])
+  ),
 };
 
 export const emptyBoard = (): BoardData => ({
@@ -106,7 +136,7 @@ export const createFakeServer = ({ signedIn = true }: { signedIn?: boolean } = {
     },
   };
 
-  server.addBoard(DEMO_USER.id, "Project Board", initialData, "board-1");
+  server.addBoard(DEMO_USER.id, "Project Board", DEMO_BOARD, "board-1");
 
   const currentAccount = () =>
     [...accounts.values()].find((account) => account.user.id === server.sessionUserId);
@@ -119,7 +149,7 @@ export const createFakeServer = ({ signedIn = true }: { signedIn?: boolean } = {
       ...stored.summary,
       cardCount: Object.keys(stored.data.cards).length,
       isOwner: stored.ownerId === me.id,
-      ownerName: owner.displayName || owner.username,
+      ownerName: personName(owner),
       memberCount: stored.memberIds.length,
     };
   };
@@ -342,4 +372,4 @@ export const createFakeServer = ({ signedIn = true }: { signedIn?: boolean } = {
 
 export type FakeServer = ReturnType<typeof createFakeServer>;
 
-export const failWith = (status: number, message: string) => detail(status, message);
+export const failWith = detail;

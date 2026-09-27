@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { api, type BoardSummary } from "@/lib/api";
+import { api, errorMessage, type BoardSummary } from "@/lib/api";
 
 type BoardsOverviewProps = {
   boards: BoardSummary[];
@@ -21,18 +21,19 @@ export const BoardsOverview = ({ boards, onOpen, onCreated, onDeleted }: BoardsO
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!title.trim()) {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
       return;
     }
     setError("");
     setIsCreating(true);
     try {
-      const board = await api.createBoard(title.trim(), description.trim());
+      const board = await api.createBoard(trimmedTitle, description.trim());
       setTitle("");
       setDescription("");
       onCreated(board);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not create the board.");
+      setError(errorMessage(caught, "Could not create the board."));
     } finally {
       setIsCreating(false);
     }
@@ -48,7 +49,7 @@ export const BoardsOverview = ({ boards, onOpen, onCreated, onDeleted }: BoardsO
       await api.deleteBoard(board.id);
       onDeleted(board.id);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not delete the board.");
+      setError(errorMessage(caught, "Could not delete the board."));
     }
   };
 

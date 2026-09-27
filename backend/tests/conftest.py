@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -5,6 +7,8 @@ from app import database, security
 from app.main import app
 
 DEMO_BOARD = "/api/boards/board-1"
+DATA = f"{DEMO_BOARD}/data"
+MEMBERS = f"{DEMO_BOARD}/members"
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +41,23 @@ def registered_client(username: str, password: str = "password123", display_name
     )
     assert response.status_code == 201, response.text
     return client
+
+
+def user_id(client: TestClient) -> str:
+    return client.get("/api/auth/me").json()["id"]
+
+
+def fake_model(monkeypatch, reply: dict) -> dict:
+    """Makes the AI route get `reply` from the model; returns what the model was sent."""
+    captured = {}
+
+    def fake_call_openrouter_messages(messages, response_format=None):
+        captured["messages"] = messages
+        captured["response_format"] = response_format
+        return json.dumps(reply)
+
+    monkeypatch.setattr("app.ai_flow.call_openrouter_messages", fake_call_openrouter_messages)
+    return captured
 
 
 @pytest.fixture

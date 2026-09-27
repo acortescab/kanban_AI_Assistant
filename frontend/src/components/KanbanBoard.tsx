@@ -16,10 +16,17 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { AiChatSidebar } from "@/components/AiChatSidebar";
-import { KanbanColumn } from "@/components/KanbanColumn";
+import { blurOnEnter, KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
 import { BoardActivity } from "@/components/BoardActivity";
-import { api, ApiError, type BoardMember, type BoardSummary } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  errorMessage,
+  type BoardMember,
+  type BoardSummary,
+  type VersionedBoard,
+} from "@/lib/api";
 import { BoardMembers } from "@/components/BoardMembers";
 import { CardFilterBar } from "@/components/CardFilterBar";
 import {
@@ -57,6 +64,16 @@ const loadBoard = async (boardId: string) => {
   }
 };
 
+const saveErrorMessage = (reloaded: boolean, caught: unknown) => {
+  if (!reloaded) {
+    return "Could not save your last change. Please refresh the page.";
+  }
+  if (caught instanceof ApiError && caught.status === 409) {
+    return "Someone else changed this board, so your last change was not saved. The latest version is shown.";
+  }
+  return "Could not save your last change. The board was reloaded from the server, so unsaved changes were lost.";
+};
+
 export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }: KanbanBoardProps) => {
   const boardId = summary.id;
   const [board, setBoard] = useState<BoardData | null>(null);
@@ -83,6 +100,13 @@ export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }:
   const trackVersion = (next: number) => {
     version.current = next;
     setChangeCount((count) => count + 1);
+  };
+
+  // Shows a board the server already stored, dropping saves queued against the old one.
+  const replaceBoard = (next: VersionedBoard) => {
+    generation.current += 1;
+    trackVersion(next.version);
+    setBoard(next.board);
   };
 
   useEffect(() => {
@@ -141,14 +165,7 @@ export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }:
         // and fall back to the last state the server actually stored.
         generation.current += 1;
         const reloaded = await loadBoard(boardId);
-        const conflict = caught instanceof ApiError && caught.status === 409;
-        setError(
-          !reloaded
-            ? "Could not save your last change. Please refresh the page."
-            : conflict
-              ? "Someone else changed this board, so your last change was not saved. The latest version is shown."
-              : "Could not save your last change. The board was reloaded from the server, so unsaved changes were lost."
-        );
+        setError(saveErrorMessage(reloaded !== null, caught));
         if (reloaded) {
           trackVersion(reloaded.version);
           setBoard(reloaded.board);
@@ -162,9 +179,7 @@ export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }:
 
   // The AI already saved this board on the server, at this version.
   const applyAiBoard = (nextBoard: BoardData, nextVersion: number) => {
-    generation.current += 1;
-    trackVersion(nextVersion);
-    setBoard(nextBoard);
+    replaceBoard({ board: nextBoard, version: nextVersion });
     setError("");
   };
 
@@ -178,9 +193,7 @@ export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }:
       saveQueue.current = saveQueue.current.then(async () => {
         const reloaded = await loadBoard(boardId);
         if (reloaded) {
-          generation.current += 1;
-          trackVersion(reloaded.version);
-          setBoard(reloaded.board);
+          replaceBoard(reloaded);
         }
       });
     }
@@ -190,7 +203,7 @@ export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }:
     try {
       onSummaryChange(await api.updateBoard(boardId, changes));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not update the board.");
+      setError(errorMessage(caught, "Could not update the board."));
     }
   };
 
@@ -314,11 +327,7 @@ export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }:
             aria-label="Board title"
             maxLength={100}
             onBlur={(event) => commitSummaryField(event.currentTarget, "title", summary.title)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.currentTarget.blur();
-              }
-            }}
+            onKeyDown={blurOnEnter}
             className="w-full max-w-xl rounded-md bg-transparent px-1 font-display text-lg font-semibold text-[var(--navy-dark)] outline-none transition hover:bg-white focus:bg-white"
           />
           <input
@@ -330,11 +339,7 @@ export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }:
             onBlur={(event) =>
               commitSummaryField(event.currentTarget, "description", summary.description)
             }
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.currentTarget.blur();
-              }
-            }}
+            onKeyDown={blurOnEnter}
             className="w-full max-w-xl rounded-md bg-transparent px-1 text-sm text-[var(--gray-text)] outline-none transition placeholder:text-[rgba(136,136,136,0.7)] hover:bg-white focus:bg-white"
           />
           {summary.isOwner ? null : (

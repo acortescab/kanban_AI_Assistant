@@ -55,6 +55,12 @@ export class ApiError extends Error {
 // Fired on any 401 so the app can drop back to the sign-in screen when a session expires.
 export const UNAUTHORIZED_EVENT = "kanban:unauthorized";
 
+export const errorMessage = (caught: unknown, fallback = "Something went wrong.") =>
+  caught instanceof Error && caught.message ? caught.message : fallback;
+
+export const personName = (person: { displayName: string; username: string }) =>
+  person.displayName || person.username;
+
 const readDetail = async (response: Response) => {
   try {
     const body = (await response.json()) as { detail?: unknown };
@@ -80,12 +86,11 @@ const send = async (
   body?: unknown,
   headers: Record<string, string> = {}
 ) => {
+  const allHeaders =
+    body === undefined ? headers : { "Content-Type": "application/json", ...headers };
   const response = await fetch(path, {
     method,
-    headers:
-      body === undefined && Object.keys(headers).length === 0
-        ? undefined
-        : { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...headers },
+    headers: Object.keys(allHeaders).length > 0 ? allHeaders : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 

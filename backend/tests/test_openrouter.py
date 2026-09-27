@@ -3,11 +3,32 @@ import pytest
 
 from app.openrouter_client import call_openrouter_messages
 
+REQUEST = httpx.Request("POST", "https://openrouter.test")
+HI = [{"role": "user", "content": "hi"}]
+
+
+def respond_with(monkeypatch, status_code=200, body=None, error=None) -> dict:
+    """Fakes OpenRouter with a key set; returns what the client posted."""
+    captured = {}
+
+    def fake_post(url, *, headers=None, json=None, timeout=None):
+        captured.update(url=url, headers=headers, json=json)
+        if error is not None:
+            raise error
+        return httpx.Response(status_code, json=body, request=REQUEST)
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr("app.openrouter_client.httpx.post", fake_post)
+    return captured
+
 
 @pytest.fixture
 def client(demo):
     """The connectivity check spends API credits, so it needs a signed-in user."""
     return demo
+
+
+# --- The /api/ai/test route --------------------------------------------------
 
 
 def test_openrouter_test_route_requires_a_prompt(client):
@@ -26,12 +47,7 @@ def test_openrouter_test_route_requires_api_key(monkeypatch, client):
 
 
 def test_openrouter_network_error_returns_503(monkeypatch, client):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-
-    def failing_post(*_args, **_kwargs):
-        raise httpx.ConnectTimeout("timed out")
-
-    monkeypatch.setattr("app.openrouter_client.httpx.post", failing_post)
+    respond_with(monkeypatch, error=httpx.ConnectTimeout("timed out"))
 
     response = client.post("/api/ai/test", json={"prompt": "2 + 2"})
 
@@ -40,34 +56,7 @@ def test_openrouter_network_error_returns_503(monkeypatch, client):
 
 
 def test_openrouter_test_route_returns_model_response(monkeypatch, client):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-
-    class FakeResponse:
-        def __init__(self):
-            self.status_code = 200
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "choices": [{
-                    "message": {
-                        "content": "4"
-                    }
-                }]
-            }
-
-    captured = {}
-
-    def fake_post(url, *, headers=None, json=None, timeout=None):
-        captured["url"] = url
-        captured["headers"] = headers
-        captured["json"] = json
-        captured["timeout"] = timeout
-        return FakeResponse()
-
-    monkeypatch.setattr("app.openrouter_client.httpx.post", fake_post)
+    captured = respond_with(monkeypatch, body={"choices": [{"message": {"content": "4"}}]})
 
     response = client.post("/api/ai/test", json={"prompt": "2 + 2"})
 
@@ -80,30 +69,11 @@ def test_openrouter_test_route_returns_model_response(monkeypatch, client):
 
 # --- Client error handling, called directly ------------------------------------
 
-REQUEST = httpx.Request("POST", "https://openrouter.test")
-
-
-def respond_with(monkeypatch, status_code=200, body=None, error=None):
-    def fake_post(url, *, headers=None, json=None, timeout=None):
-        if error is not None:
-            raise error
-        return httpx.Response(status_code, json=body, request=REQUEST)
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr("app.openrouter_client.httpx.post", fake_post)
-
 
 def test_response_format_is_sent_when_given(monkeypatch):
-    captured = {}
+    captured = respond_with(monkeypatch, body={"choices": [{"message": {"content": "ok"}}]})
 
-    def fake_post(url, *, headers=None, json=None, timeout=None):
-        captured["json"] = json
-        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]}, request=REQUEST)
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr("app.openrouter_client.httpx.post", fake_post)
-
-    call_openrouter_messages([{"role": "user", "content": "hi"}], response_format={"type": "json_object"})
+    call_openrouter_messages(HI, response_format={"type": "json_object"})
 
     assert captured["json"]["response_format"] == {"type": "json_object"}
 
@@ -116,7 +86,7 @@ def test_http_errors_become_runtime_errors(monkeypatch, status_code, message):
     respond_with(monkeypatch, status_code=status_code, body={"error": "nope"})
 
     with pytest.raises(RuntimeError, match=message):
-        call_openrouter_messages([{"role": "user", "content": "hi"}])
+        call_openrouter_messages(HI)
 
 
 @pytest.mark.parametrize(
@@ -130,7 +100,7 @@ def test_network_errors_become_runtime_errors(monkeypatch, error, message):
     respond_with(monkeypatch, error=error)
 
     with pytest.raises(RuntimeError, match=message):
-        call_openrouter_messages([{"role": "user", "content": "hi"}])
+        call_openrouter_messages(HI)
 
 
 def test_content_parts_are_joined(monkeypatch):
@@ -139,7 +109,7 @@ def test_content_parts_are_joined(monkeypatch):
         body={"choices": [{"message": {"content": [{"text": "Hello "}, "world"]}}]},
     )
 
-    assert call_openrouter_messages([{"role": "user", "content": "hi"}]) == "Hello world"
+    assert call_openrouter_messages(HI) == "Hello world"
 
 
 @pytest.mark.parametrize(
@@ -153,4 +123,4 @@ def test_unusable_responses_raise_value_errors(monkeypatch, body, message):
     respond_with(monkeypatch, body=body)
 
     with pytest.raises(ValueError, match=message):
-        call_openrouter_messages([{"role": "user", "content": "hi"}])
+        call_openrouter_messages(HI)

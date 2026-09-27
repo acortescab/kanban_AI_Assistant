@@ -6,7 +6,7 @@ import { AccountSettings } from "@/components/AccountSettings";
 import { AdminUsers } from "@/components/AdminUsers";
 import { BoardsOverview } from "@/components/BoardsOverview";
 import { KanbanBoard } from "@/components/KanbanBoard";
-import { api, type BoardSummary, type User } from "@/lib/api";
+import { api, personName, type BoardSummary, type User } from "@/lib/api";
 
 type View =
   | { kind: "boards" }
@@ -39,7 +39,7 @@ const writeLastBoard = (userId: string, boardId: string) => {
 
 const LOAD_ERROR = "Could not load your boards. Please refresh the page.";
 
-const navButtonClass =(active: boolean) =>
+const navButtonClass = (active: boolean) =>
   clsx(
     "rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.15em] transition",
     active
@@ -81,6 +81,9 @@ export const Workspace = ({ user, onUserChange, onLogout }: WorkspaceProps) => {
   const replaceSummary = (summary: BoardSummary) =>
     setBoards((list) => list?.map((board) => (board.id === summary.id ? summary : board)) ?? null);
 
+  const removeBoard = (boardId: string) =>
+    setBoards((list) => list?.filter((board) => board.id !== boardId) ?? null);
+
   const activeBoard =
     view.kind === "board" ? boards?.find((board) => board.id === view.boardId) : undefined;
 
@@ -117,7 +120,7 @@ export const Workspace = ({ user, onUserChange, onLogout }: WorkspaceProps) => {
 
         <div className="ml-auto flex items-center gap-2">
           <span className="hidden text-sm text-[var(--gray-text)] sm:inline" data-testid="current-user">
-            {user.displayName || user.username}
+            {personName(user)}
           </span>
           <button
             type="button"
@@ -154,7 +157,7 @@ export const Workspace = ({ user, onUserChange, onLogout }: WorkspaceProps) => {
           currentUserId={user.id}
           onSummaryChange={replaceSummary}
           onLeft={() => {
-            setBoards((list) => list?.filter((board) => board.id !== activeBoard.id) ?? null);
+            removeBoard(activeBoard.id);
             setView({ kind: "boards" });
           }}
         />
@@ -168,9 +171,7 @@ export const Workspace = ({ user, onUserChange, onLogout }: WorkspaceProps) => {
             setBoards((list) => [...(list ?? []), board]);
             openBoard(board.id);
           }}
-          onDeleted={(boardId) =>
-            setBoards((list) => list?.filter((board) => board.id !== boardId) ?? null)
-          }
+          onDeleted={removeBoard}
         />
       ) : null}
 

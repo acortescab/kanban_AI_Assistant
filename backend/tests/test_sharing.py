@@ -6,14 +6,7 @@ import pytest
 
 from app import service
 from app.database import get_connection
-from tests.conftest import DEMO_BOARD, registered_client
-
-DATA = f"{DEMO_BOARD}/data"
-MEMBERS = f"{DEMO_BOARD}/members"
-
-
-def user_id(client) -> str:
-    return client.get("/api/auth/me").json()["id"]
+from tests.conftest import DATA, DEMO_BOARD, MEMBERS, fake_model, registered_client, user_id
 
 
 @pytest.fixture
@@ -288,24 +281,15 @@ def test_the_ai_refuses_to_overwrite_an_edit_made_while_it_was_thinking(monkeypa
 def test_ai_replies_carry_the_board_version(monkeypatch, demo):
     board = demo.get(DATA).json()
 
-    def model(reply):
-        monkeypatch.setattr(
-            "app.ai_flow.call_openrouter_messages",
-            lambda messages, response_format=None: json.dumps(reply),
-        )
-
-    model({"response": "Nothing to change.", "board": None})
+    fake_model(monkeypatch, {"response": "Nothing to change.", "board": None})
     assert demo.post(f"{DEMO_BOARD}/ai/chat", json={"question": "Hi"}).headers["ETag"] == '"0"'
 
-    model({"response": "Changed.", "board": board})
+    fake_model(monkeypatch, {"response": "Changed.", "board": board})
     assert demo.post(f"{DEMO_BOARD}/ai/chat", json={"question": "Go"}).headers["ETag"] == '"1"'
 
 
 def test_a_member_can_use_the_ai_on_a_shared_board(monkeypatch, shared):
     _demo, alice = shared
-    monkeypatch.setattr(
-        "app.ai_flow.call_openrouter_messages",
-        lambda messages, response_format=None: json.dumps({"response": "Hi", "board": None}),
-    )
+    fake_model(monkeypatch, {"response": "Hi", "board": None})
 
     assert alice.post(f"{DEMO_BOARD}/ai/chat", json={"question": "Hi"}).status_code == 200

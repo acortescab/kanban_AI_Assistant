@@ -1,6 +1,13 @@
 import clsx from "clsx";
-import type { BoardMember } from "@/lib/api";
-import { EMPTY_FILTER, isFilterActive, PRIORITIES, type CardFilter, type Priority } from "@/lib/kanban";
+import { personName, type BoardMember } from "@/lib/api";
+import {
+  EMPTY_FILTER,
+  isFilterActive,
+  PRIORITIES,
+  priorityLabel,
+  type CardFilter,
+  type Priority,
+} from "@/lib/kanban";
 
 type CardFilterBarProps = {
   filter: CardFilter;
@@ -57,7 +64,7 @@ export const CardFilterBar = ({
         <option value="all">Any priority</option>
         {PRIORITIES.map((priority) => (
           <option key={priority} value={priority}>
-            {priority[0].toUpperCase() + priority.slice(1)} priority
+            {priorityLabel(priority)} priority
           </option>
         ))}
       </select>
@@ -86,9 +93,7 @@ export const CardFilterBar = ({
           <option value="">Anyone</option>
           {members.map((member) => (
             <option key={member.userId} value={member.userId}>
-              {member.userId === currentUserId
-                ? "Assigned to me"
-                : member.displayName || member.username}
+              {member.userId === currentUserId ? "Assigned to me" : personName(member)}
             </option>
           ))}
         </select>

@@ -1,14 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type AdminUser, type Role } from "@/lib/api";
+import { api, errorMessage, personName, type AdminUser, type Role } from "@/lib/api";
 
 type AdminUsersProps = {
   currentUserId: string;
 };
-
-const errorMessage = (caught: unknown) =>
-  caught instanceof Error ? caught.message : "Something went wrong.";
 
 export const AdminUsers = ({ currentUserId }: AdminUsersProps) => {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
@@ -85,7 +82,7 @@ export const AdminUsers = ({ currentUserId }: AdminUsersProps) => {
                     >
                       <td className="px-4 py-3">
                         <p className="font-semibold text-[var(--navy-dark)]">
-                          {user.displayName || user.username}
+                          {personName(user)}
                           {isSelf ? <span className="font-normal text-[var(--gray-text)]"> (you)</span> : null}
                         </p>
                         <p className="text-xs text-[var(--gray-text)]">{user.username}</p>

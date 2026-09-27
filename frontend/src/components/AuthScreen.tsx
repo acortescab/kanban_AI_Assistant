@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { api, type User } from "@/lib/api";
+import { api, errorMessage, type User } from "@/lib/api";
 
 type AuthScreenProps = {
   onAuthenticated: (user: User) => void;
@@ -34,7 +34,7 @@ export const AuthScreen = ({ onAuthenticated }: AuthScreenProps) => {
         : await api.register(username, password, displayName);
       onAuthenticated(user);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Something went wrong.");
+      setError(errorMessage(caught));
       setIsSubmitting(false);
     }
   };

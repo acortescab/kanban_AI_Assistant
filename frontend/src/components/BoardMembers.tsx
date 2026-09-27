@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { api, type BoardMember } from "@/lib/api";
+import { api, errorMessage, personName, type BoardMember } from "@/lib/api";
 
 type BoardMembersProps = {
   boardId: string;
@@ -11,9 +11,6 @@ type BoardMembersProps = {
   onMembersChange: (members: BoardMember[]) => void;
   onLeft: () => void;
 };
-
-const errorMessage = (caught: unknown) =>
-  caught instanceof Error ? caught.message : "Something went wrong.";
 
 export const BoardMembers = ({
   boardId,
@@ -28,12 +25,13 @@ export const BoardMembers = ({
 
   const addMember = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!username.trim()) {
+    const name = username.trim();
+    if (!name) {
       return;
     }
     setError("");
     try {
-      onMembersChange(await api.addMember(boardId, username.trim()));
+      onMembersChange(await api.addMember(boardId, name));
       setUsername("");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -67,31 +65,27 @@ export const BoardMembers = ({
       <div className="flex flex-wrap items-start gap-4">
         <ul className="flex flex-1 flex-wrap gap-2">
           {members.map((member) => {
-            const canRemove =
-              member.role === "member" && (isOwner || member.userId === currentUserId);
+            const isSelf = member.userId === currentUserId;
+            const canRemove = member.role === "member" && (isOwner || isSelf);
+            // The owner is marked as such; a member with a display name also shows the username.
+            const note = member.role === "owner" ? "owner" : member.displayName && member.username;
             return (
               <li
                 key={member.userId}
                 className="flex items-center gap-2 rounded-full border border-[var(--stroke)] bg-[var(--surface)] py-1 pl-3 pr-1 text-sm"
               >
                 <span className="font-medium text-[var(--navy-dark)]">
-                  {member.displayName || member.username}
+                  {personName(member)}
                 </span>
-                {member.role === "owner" ? (
-                  <span className="text-xs text-[var(--gray-text)]">owner</span>
-                ) : member.displayName ? (
-                  <span className="text-xs text-[var(--gray-text)]">{member.username}</span>
-                ) : null}
+                {note ? <span className="text-xs text-[var(--gray-text)]">{note}</span> : null}
                 {canRemove ? (
                   <button
                     type="button"
                     onClick={() => void removeMember(member)}
                     className="rounded-full px-2 py-0.5 text-xs font-semibold text-[var(--gray-text)] transition hover:bg-red-50 hover:text-red-600"
-                    aria-label={
-                      member.userId === currentUserId ? "Leave board" : `Remove ${member.username}`
-                    }
+                    aria-label={isSelf ? "Leave board" : `Remove ${member.username}`}
                   >
-                    {member.userId === currentUserId ? "Leave" : "Remove"}
+                    {isSelf ? "Leave" : "Remove"}
                   </button>
                 ) : (
                   <span className="w-1" />

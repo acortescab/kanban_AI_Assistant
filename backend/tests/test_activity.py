@@ -1,17 +1,11 @@
 import copy
-import json
 
 from app import activity
+from app.database import get_connection
 from app.schemas import BoardDataModel
-from tests.conftest import DEMO_BOARD, registered_client
+from tests.conftest import DATA, DEMO_BOARD, MEMBERS, fake_model, registered_client, user_id
 
-DATA = f"{DEMO_BOARD}/data"
 ACTIVITY = f"{DEMO_BOARD}/activity"
-MEMBERS = f"{DEMO_BOARD}/members"
-
-
-def user_id(client) -> str:
-    return client.get("/api/auth/me").json()["id"]
 
 
 def messages(client, path=ACTIVITY):
@@ -125,10 +119,7 @@ def test_ai_edits_are_attributed_to_the_assistant(monkeypatch, demo):
     data = demo.get(DATA).json()
     changed = copy.deepcopy(data)
     changed["cards"]["card-1"]["title"] = "Renamed by AI"
-    monkeypatch.setattr(
-        "app.ai_flow.call_openrouter_messages",
-        lambda messages, response_format=None: json.dumps({"response": "Done.", "board": changed}),
-    )
+    fake_model(monkeypatch, {"response": "Done.", "board": changed})
 
     demo.post(f"{DEMO_BOARD}/ai/chat", json={"question": "Rename"})
 
@@ -153,8 +144,6 @@ def test_activity_is_capped_per_board(demo, monkeypatch):
 
 
 def test_deleting_a_board_deletes_its_activity(demo):
-    from app.database import get_connection
-
     demo.patch(DEMO_BOARD, json={"title": "Soon gone"})
     demo.delete(DEMO_BOARD)
 
@@ -223,27 +212,19 @@ def test_deleting_a_member_account_unassigns_their_cards(demo, alice):
 
 def test_the_ai_is_told_who_can_be_assigned(monkeypatch, demo, alice):
     demo.post(MEMBERS, json={"username": "alice"})
-    captured = {}
-
-    def model(messages, response_format=None):
-        captured["system"] = messages[0]["content"]
-        return json.dumps({"response": "Hi", "board": None})
-
-    monkeypatch.setattr("app.ai_flow.call_openrouter_messages", model)
+    captured = fake_model(monkeypatch, {"response": "Hi", "board": None})
 
     demo.post(f"{DEMO_BOARD}/ai/chat", json={"question": "Who is here?"})
 
-    assert f'"{user_id(alice)}": "Alice"' in captured["system"]
-    assert captured["system"].index("People on the board") < captured["system"].index("Current board JSON")
+    system = captured["messages"][0]["content"]
+    assert f'"{user_id(alice)}": "Alice"' in system
+    assert system.index("People on the board") < system.index("Current board JSON")
 
 
 def test_the_ai_cannot_assign_outsiders(monkeypatch, demo, alice):
     data = demo.get(DATA).json()
     data["cards"]["card-1"]["assigneeId"] = user_id(alice)
-    monkeypatch.setattr(
-        "app.ai_flow.call_openrouter_messages",
-        lambda messages, response_format=None: json.dumps({"response": "Assigned.", "board": data}),
-    )
+    fake_model(monkeypatch, {"response": "Assigned.", "board": data})
 
     response = demo.post(f"{DEMO_BOARD}/ai/chat", json={"question": "Assign to alice"})
 

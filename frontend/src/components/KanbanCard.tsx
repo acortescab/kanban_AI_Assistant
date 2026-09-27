@@ -2,13 +2,14 @@ import { useState, type FormEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
-import type { BoardMember } from "@/lib/api";
+import { personName, type BoardMember } from "@/lib/api";
 import {
   formatDueDate,
   initials,
   isOverdue,
   parseLabels,
   PRIORITIES,
+  priorityLabel,
   type Card,
   type Priority,
 } from "@/lib/kanban";
@@ -41,8 +42,6 @@ const toDraft = (card: Card) => ({
   labels: card.labels.join(", "),
   assigneeId: card.assigneeId ?? "",
 });
-
-const memberName = (member: BoardMember) => member.displayName || member.username;
 
 export const KanbanCard = ({ card, today, members, onDelete, onEdit }: KanbanCardProps) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -128,7 +127,7 @@ export const KanbanCard = ({ card, today, members, onDelete, onEdit }: KanbanCar
               >
                 {PRIORITIES.map((priority) => (
                   <option key={priority} value={priority}>
-                    {priority[0].toUpperCase() + priority.slice(1)}
+                    {priorityLabel(priority)}
                   </option>
                 ))}
               </select>
@@ -160,7 +159,7 @@ export const KanbanCard = ({ card, today, members, onDelete, onEdit }: KanbanCar
             <option value="">Unassigned</option>
             {members.map((member) => (
               <option key={member.userId} value={member.userId}>
-                {memberName(member)}
+                {personName(member)}
               </option>
             ))}
           </select>
@@ -282,11 +281,11 @@ export const KanbanCard = ({ card, today, members, onDelete, onEdit }: KanbanCar
               {assignee ? (
                 <span
                   className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--primary-blue)] px-1 text-[10px] font-semibold text-white"
-                  title={`Assigned to ${memberName(assignee)}`}
-                  aria-label={`Assigned to ${memberName(assignee)}`}
+                  title={`Assigned to ${personName(assignee)}`}
+                  aria-label={`Assigned to ${personName(assignee)}`}
                   data-testid={`assignee-${card.id}`}
                 >
-                  {initials(memberName(assignee))}
+                  {initials(personName(assignee))}
                 </span>
               ) : null}
             </div>

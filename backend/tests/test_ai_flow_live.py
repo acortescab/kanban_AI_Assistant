@@ -40,19 +40,10 @@ def require_api_key():
         pytest.skip(str(exc))
 
 
-def call(*args, **kwargs):
+def skip_if_rate_limited(function, *args, **kwargs):
     """Turns an upstream rate limit into a skip, so only real defects fail."""
     try:
-        return call_openrouter(*args, **kwargs)
-    except RuntimeError as exc:
-        if "rate limited" in str(exc):
-            pytest.skip(f"OpenRouter free pool is busy: {exc}")
-        raise
-
-
-def call_structured(*args, **kwargs):
-    try:
-        return call_openrouter_messages(*args, **kwargs)
+        return function(*args, **kwargs)
     except RuntimeError as exc:
         if "rate limited" in str(exc):
             pytest.skip(f"OpenRouter free pool is busy: {exc}")
@@ -60,7 +51,8 @@ def call_structured(*args, **kwargs):
 
 
 def test_model_answers_a_simple_prompt():
-    assert call("Reply with only the number: 2 + 2").strip().endswith("4")
+    reply = skip_if_rate_limited(call_openrouter, "Reply with only the number: 2 + 2")
+    assert reply.strip().endswith("4")
 
 
 def test_model_returns_a_parsable_board_when_asked_to_move_a_card():
@@ -71,7 +63,9 @@ def test_model_returns_a_parsable_board_when_asked_to_move_a_card():
     )
     messages = build_structured_ai_messages(request, board)
 
-    content = call_structured(messages, response_format=RESPONSE_FORMAT)
+    content = skip_if_rate_limited(
+        call_openrouter_messages, messages, response_format=RESPONSE_FORMAT
+    )
     parsed = parse_structured_ai_response(content)
 
     assert parsed.response.strip()
@@ -86,12 +80,9 @@ def test_chat_route_applies_a_board_change_end_to_end():
     before = demo_board()
     request = AIChatRequestModel(question="Add a new card titled 'Live check' to Backlog.")
 
-    try:
-        response, _version = generate_structured_ai_response(request, DEMO_USER_ID, DEMO_BOARD_ID)
-    except RuntimeError as exc:
-        if "rate limited" in str(exc):
-            pytest.skip(f"OpenRouter free pool is busy: {exc}")
-        raise
+    response, _version = skip_if_rate_limited(
+        generate_structured_ai_response, request, DEMO_USER_ID, DEMO_BOARD_ID
+    )
 
     assert response.response.strip()
     if response.board is not None:
