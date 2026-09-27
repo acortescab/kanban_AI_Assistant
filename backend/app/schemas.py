@@ -5,20 +5,29 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 FIXED_COLUMN_IDS = ["col-backlog", "col-discovery", "col-progress", "col-review", "col-done"]
 
+# Caps that keep a single request inside a normal model context. Long enough for real use,
+# short enough that a runaway or hostile payload cannot blow up the prompt.
+MAX_TITLE_LENGTH = 200
+MAX_DETAILS_LENGTH = 5000
+MAX_COLUMN_TITLE_LENGTH = 100
+MAX_QUESTION_LENGTH = 4000
+MAX_MESSAGE_LENGTH = 4000
+MAX_HISTORY_MESSAGES = 40
+
 
 class CardModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    title: str
-    details: str = ""
+    title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
+    details: str = Field(default="", max_length=MAX_DETAILS_LENGTH)
 
 
 class ColumnModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    title: str
+    title: str = Field(min_length=1, max_length=MAX_COLUMN_TITLE_LENGTH)
     cardIds: list[str] = Field(default_factory=list)
 
 
@@ -56,14 +65,16 @@ class ChatMessageModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
 
 
 class AIChatRequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    question: str = Field(min_length=1)
-    history: list[ChatMessageModel] = Field(default_factory=list)
+    question: str = Field(min_length=1, max_length=MAX_QUESTION_LENGTH)
+    history: list[ChatMessageModel] = Field(
+        default_factory=list, max_length=MAX_HISTORY_MESSAGES
+    )
 
 
 class AIChatResponseModel(BaseModel):

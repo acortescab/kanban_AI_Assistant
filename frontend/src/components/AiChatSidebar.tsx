@@ -128,6 +128,7 @@ export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProp
       <div
         className="mt-4 flex min-h-[320px] flex-1 flex-col gap-3 overflow-y-auto rounded-3xl border border-[var(--stroke)] bg-[var(--surface)] p-4"
         aria-label="AI conversation"
+        aria-live="polite"
       >
         {messages.map((message) => (
           <div

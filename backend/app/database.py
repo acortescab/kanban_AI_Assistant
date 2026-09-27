@@ -16,6 +16,8 @@ def get_now_iso() -> str:
 def get_connection() -> Iterator[sqlite3.Connection]:
     """Yields a connection that commits on success, rolls back on error, and always closes."""
     conn = sqlite3.connect(DB_PATH)
+    # SQLite ignores foreign keys unless this is turned on for every connection.
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
     try:
         with conn:

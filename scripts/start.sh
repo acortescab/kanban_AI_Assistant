@@ -9,6 +9,17 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ ! -f "$ROOT_DIR/.env" ]; then
+  echo "Missing .env in $ROOT_DIR." >&2
+  echo "Copy .env.example to .env and add your OpenRouter API key." >&2
+  exit 1
+fi
+
+if ! grep -Eq '^[[:space:]]*OPENROUTER_API_KEY=[[:space:]]*[^[:space:]#]' "$ROOT_DIR/.env"; then
+  echo "OPENROUTER_API_KEY is missing or empty in $ROOT_DIR/.env." >&2
+  exit 1
+fi
+
 docker compose up --build -d
 
 for _ in $(seq 1 30); do

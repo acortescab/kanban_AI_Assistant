@@ -1,3 +1,6 @@
+import sqlite3
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.database import _seed_board, get_connection, init_database
@@ -97,3 +100,86 @@ def test_board_route_rejects_changed_columns():
 
     assert response.status_code == 422
     assert len(client.get("/api/board").json()["columns"]) == 5
+
+
+def test_saving_preserves_the_original_created_at_and_advances_updated_at():
+    with get_connection() as conn:
+        seeded_at = conn.execute(
+            "SELECT created_at FROM cards WHERE id = 'card-1'"
+        ).fetchone()["created_at"]
+
+    payload = make_board(
+        backlog_card_ids=["card-1", "card-2"],
+        cards={
+            "card-1": {"id": "card-1", "title": "Align roadmap themes", "details": ""},
+            "card-2": {"id": "card-2", "title": "Gather customer signals", "details": ""},
+        },
+    )
+    assert client.put("/api/board", json=payload).status_code == 200
+
+    with get_connection() as conn:
+        rows = {
+            row["id"]: row
+            for row in conn.execute(
+                "SELECT id, created_at, updated_at FROM cards ORDER BY sort_order"
+            )
+        }
+
+    assert rows["card-1"]["created_at"] == seeded_at
+    assert rows["card-1"]["updated_at"] >= seeded_at
+
+
+def test_a_new_card_gets_a_created_at():
+    payload = make_board(
+        backlog_card_ids=["card-1", "card-new"],
+        cards={
+            "card-1": {"id": "card-1", "title": "Align roadmap themes", "details": ""},
+            "card-new": {"id": "card-new", "title": "Brand new", "details": ""},
+        },
+    )
+    assert client.put("/api/board", json=payload).status_code == 200
+
+    with get_connection() as conn:
+        created_at = conn.execute(
+            "SELECT created_at FROM cards WHERE id = 'card-new'"
+        ).fetchone()["created_at"]
+
+    assert created_at
+
+
+def test_cards_cannot_reference_a_column_from_another_board():
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO boards (id, user_id, title, created_at, updated_at) "
+            "VALUES ('board-2', 'user-1', 'Other', 'now', 'now')"
+        )
+
+    # col-review belongs to board-1, so a card on board-2 pointing at it must be rejected.
+    with pytest.raises(sqlite3.IntegrityError):
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT INTO cards (id, board_id, column_id, title, sort_order, created_at, updated_at) "
+                "VALUES ('card-x', 'board-2', 'col-review', 'Bad', 0, 'now', 'now')"
+            )
+
+
+def test_board_route_returns_404_when_the_board_is_missing():
+    # Children first: the foreign keys are enforced, so there is no cascade delete.
+    with get_connection() as conn:
+        conn.execute("DELETE FROM cards")
+        conn.execute("DELETE FROM board_columns")
+        conn.execute("DELETE FROM boards WHERE id = 'board-1'")
+
+    response = client.get("/api/board")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Board not found"
+
+
+def test_board_route_rejects_oversized_fields():
+    payload = make_board(
+        backlog_card_ids=["card-1"],
+        cards={"card-1": {"id": "card-1", "title": "x" * 500, "details": ""}},
+    )
+
+    assert client.put("/api/board", json=payload).status_code == 422

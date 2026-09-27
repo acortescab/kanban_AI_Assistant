@@ -40,7 +40,8 @@ def call_openrouter_messages(
             OPENROUTER_URL,
             headers=headers,
             json=payload,
-            timeout=30.0,
+            # A 27B model on a free shared pool routinely takes over a minute to answer.
+            timeout=120.0,
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -49,6 +50,12 @@ def call_openrouter_messages(
                 "OpenRouter is rate limited right now. Please try again in a moment."
             ) from exc
         raise RuntimeError(f"OpenRouter call failed: {exc}") from exc
+    except httpx.ConnectTimeout as exc:
+        raise RuntimeError(f"Could not reach OpenRouter: {exc}") from exc
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(
+            "OpenRouter did not respond within 120 seconds. Please try again."
+        ) from exc
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Could not reach OpenRouter: {exc}") from exc
 

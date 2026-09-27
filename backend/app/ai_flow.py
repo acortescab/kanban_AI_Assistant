@@ -13,6 +13,10 @@ RESPONSE_FORMAT = {
     "type": "json_schema",
     "json_schema": {
         "name": "kanban_reply",
+        # Advisory only. The generated schema leaves cardIds, details and board out
+        # of "required" because they have defaults, so it is not valid for strict
+        # structured outputs and OpenRouter may ignore it. The parser below, not
+        # this parameter, is what keeps the flow working.
         "schema": AIChatResponseModel.model_json_schema(),
     },
 }
@@ -20,12 +24,16 @@ RESPONSE_FORMAT = {
 SYSTEM_PROMPT = (
     "You are a project management assistant for a Kanban board. "
     "Respond with a single JSON object only. The object must have these keys: "
-    '"response" (string) and "board" (either null or a full board replacement). ' 
+    '"response" (string) and "board" (either null or a full board replacement). '
     "If you change the board, return the complete board JSON. "
     "If you do not change the board, set board to null. "
     "Board rules: keep exactly the same five columns with the same ids in the same order "
     "(you may only change column titles); every card in cards must be listed in exactly one "
     "column's cardIds, and every id in cardIds must exist in cards. "
+    "You may add, edit, move and reorder cards, but you must never remove a card: "
+    "keep every card id you were given. If the user asks for a card to be deleted, "
+    "explain that they can remove it themselves with the card's Remove button, and set "
+    "board to null. "
     "Do not use markdown fences or any extra text."
 )
 
@@ -92,12 +100,24 @@ def parse_structured_ai_response(content: str) -> AIChatResponseModel:
     return AIChatResponseModel(response=response, board=board)
 
 
+def reject_removed_cards(board: BoardDataModel, sent_board: BoardDataModel) -> None:
+    """Refuse a board that drops cards. Deleting is a user action, never the AI's."""
+    removed = sorted(set(sent_board.cards) - set(board.cards))
+    if removed:
+        raise ValueError(
+            "AI response tried to remove cards, which is not allowed: "
+            + ", ".join(removed)
+        )
+
+
 def generate_structured_ai_response(request: AIChatRequestModel) -> AIChatResponseModel:
-    messages = build_structured_ai_messages(request, get_board_record())
+    board = get_board_record()
+    messages = build_structured_ai_messages(request, board)
     content = call_openrouter_messages(messages, response_format=RESPONSE_FORMAT)
     response = parse_structured_ai_response(content)
 
     if response.board is not None:
+        reject_removed_cards(response.board, board)
         save_board_record(response.board)
 
     return response
