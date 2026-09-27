@@ -1,18 +1,27 @@
+import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent / "kanban.db"
+DB_PATH = Path(os.getenv("KANBAN_DB_PATH", Path(__file__).resolve().parent / "kanban.db"))
 
 
 def get_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_connection() -> sqlite3.Connection:
+@contextmanager
+def get_connection() -> Iterator[sqlite3.Connection]:
+    """Yields a connection that commits on success, rolls back on error, and always closes."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_database() -> None:
@@ -43,11 +52,12 @@ def init_database() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS board_columns (
-                id TEXT PRIMARY KEY,
+                id TEXT NOT NULL,
                 board_id TEXT NOT NULL,
                 column_key TEXT NOT NULL,
                 title TEXT NOT NULL,
                 sort_order INTEGER NOT NULL,
+                PRIMARY KEY(board_id, id),
                 FOREIGN KEY(board_id) REFERENCES boards(id)
             )
             """
@@ -55,7 +65,7 @@ def init_database() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS cards (
-                id TEXT PRIMARY KEY,
+                id TEXT NOT NULL,
                 board_id TEXT NOT NULL,
                 column_id TEXT NOT NULL,
                 title TEXT NOT NULL,
@@ -63,8 +73,9 @@ def init_database() -> None:
                 sort_order INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                PRIMARY KEY(board_id, id),
                 FOREIGN KEY(board_id) REFERENCES boards(id),
-                FOREIGN KEY(column_id) REFERENCES board_columns(id)
+                FOREIGN KEY(board_id, column_id) REFERENCES board_columns(board_id, id)
             )
             """
         )
@@ -78,73 +89,44 @@ def init_database() -> None:
         )
 
         board_id = "board-1"
-        conn.execute(
+        board_created = conn.execute(
             "INSERT OR IGNORE INTO boards (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
             (board_id, user_id, "Project Board", created_at, created_at),
+        ).rowcount
+        if board_created:
+            _seed_board(conn, board_id, created_at)
+
+
+SEED_COLUMNS = [
+    ("col-backlog", "backlog", "Backlog", [
+        ("card-1", "Align roadmap themes", "Draft quarterly themes with impact statements and metrics."),
+        ("card-2", "Gather customer signals", "Review support tags, sales notes, and churn feedback."),
+    ]),
+    ("col-discovery", "discovery", "Discovery", [
+        ("card-3", "Prototype analytics view", "Sketch initial dashboard layout and key drill-downs."),
+    ]),
+    ("col-progress", "progress", "In Progress", [
+        ("card-4", "Refine status language", "Standardize column labels and tone across the board."),
+        ("card-5", "Design card layout", "Add hierarchy and spacing for scanning dense lists."),
+    ]),
+    ("col-review", "review", "Review", [
+        ("card-6", "QA micro-interactions", "Verify hover, focus, and loading states."),
+    ]),
+    ("col-done", "done", "Done", [
+        ("card-7", "Ship marketing page", "Final copy approved and asset pack delivered."),
+        ("card-8", "Close onboarding sprint", "Document release notes and share internally."),
+    ]),
+]
+
+
+def _seed_board(conn: sqlite3.Connection, board_id: str, created_at: str) -> None:
+    for column_order, (column_id, key, title, cards) in enumerate(SEED_COLUMNS):
+        conn.execute(
+            "INSERT INTO board_columns (id, board_id, column_key, title, sort_order) VALUES (?, ?, ?, ?, ?)",
+            (column_id, board_id, key, title, column_order),
         )
-
-        expected_column_ids = [
-            "col-backlog",
-            "col-discovery",
-            "col-progress",
-            "col-review",
-            "col-done",
-        ]
-        legacy = conn.execute(
-            "SELECT id FROM board_columns WHERE board_id = ? ORDER BY sort_order",
-            (board_id,),
-        ).fetchall()
-        actual_column_ids = [row["id"] for row in legacy]
-
-        needs_reset = set(actual_column_ids) != set(expected_column_ids)
-        if needs_reset:
-            conn.execute("DELETE FROM cards WHERE board_id = ?", (board_id,))
-            conn.execute("DELETE FROM board_columns WHERE board_id = ?", (board_id,))
-
-        default_columns = [
-            ("col-backlog", "backlog", "Backlog", 0),
-            ("col-discovery", "discovery", "Discovery", 1),
-            ("col-progress", "progress", "In Progress", 2),
-            ("col-review", "review", "Review", 3),
-            ("col-done", "done", "Done", 4),
-        ]
-
-        for column_id, key, title, sort_order in default_columns:
+        for card_order, (card_id, card_title, details) in enumerate(cards):
             conn.execute(
-                "INSERT OR IGNORE INTO board_columns (id, board_id, column_key, title, sort_order) VALUES (?, ?, ?, ?, ?)",
-                (column_id, board_id, key, title, sort_order),
+                "INSERT INTO cards (id, board_id, column_id, title, details, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (card_id, board_id, column_id, card_title, details, card_order, created_at, created_at),
             )
-
-        default_cards = {
-            "card-1": {"title": "Align roadmap themes", "details": "Draft quarterly themes with impact statements and metrics.", "column_id": "col-backlog"},
-            "card-2": {"title": "Gather customer signals", "details": "Review support tags, sales notes, and churn feedback.", "column_id": "col-backlog"},
-            "card-3": {"title": "Prototype analytics view", "details": "Sketch initial dashboard layout and key drill-downs.", "column_id": "col-discovery"},
-            "card-4": {"title": "Refine status language", "details": "Standardize column labels and tone across the board.", "column_id": "col-progress"},
-            "card-5": {"title": "Design card layout", "details": "Add hierarchy and spacing for scanning dense lists.", "column_id": "col-progress"},
-            "card-6": {"title": "QA micro-interactions", "details": "Verify hover, focus, and loading states.", "column_id": "col-review"},
-            "card-7": {"title": "Ship marketing page", "details": "Final copy approved and asset pack delivered.", "column_id": "col-done"},
-            "card-8": {"title": "Close onboarding sprint", "details": "Document release notes and share internally.", "column_id": "col-done"},
-        }
-
-        for card_id, card in default_cards.items():
-            conn.execute(
-                "INSERT OR IGNORE INTO cards (id, board_id, column_id, title, details, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    card_id,
-                    board_id,
-                    card["column_id"],
-                    card["title"],
-                    card["details"],
-                    0,
-                    created_at,
-                    created_at,
-                ),
-            )
-
-        if needs_reset:
-            conn.execute(
-                "UPDATE boards SET updated_at = ? WHERE id = ?",
-                (get_now_iso(), board_id),
-            )
-
-        conn.commit()

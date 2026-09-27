@@ -76,11 +76,13 @@
     {
       "name": "board_columns",
       "purpose": "Tracks the fixed columns on the Kanban board and their visible order.",
+      "primary_key": ["board_id", "id"],
       "columns": [
         {
           "name": "id",
           "type": "TEXT",
-          "primary_key": true
+          "not_null": true,
+          "notes": "Fixed per board: col-backlog, col-discovery, col-progress, col-review, col-done. Unique within a board."
         },
         {
           "name": "board_id",
@@ -111,11 +113,13 @@
     {
       "name": "cards",
       "purpose": "Stores the board's cards and their placement within columns.",
+      "primary_key": ["board_id", "id"],
       "columns": [
         {
           "name": "id",
           "type": "TEXT",
-          "primary_key": true
+          "not_null": true,
+          "notes": "Unique within a board."
         },
         {
           "name": "board_id",
@@ -127,7 +131,7 @@
           "name": "column_id",
           "type": "TEXT",
           "not_null": true,
-          "foreign_key": "board_columns.id",
+          "foreign_key": "(board_id, column_id) -> board_columns(board_id, id)",
           "notes": "Current column assignment for the card"
         },
         {
@@ -185,13 +189,8 @@
     }
   },
   "api_contract_expectations": {
-    "user_payload": {
-      "userId": "string",
-      "username": "string"
-    },
+    "notes": "GET and PUT /api/board use board_payload for the signed-in user's single board. Column ids must be the five fixed ids in order.",
     "board_payload": {
-      "id": "string",
-      "userId": "string",
       "columns": [
         {
           "id": "string",

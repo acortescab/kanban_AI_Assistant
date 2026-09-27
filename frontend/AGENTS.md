@@ -1,79 +1,37 @@
 # Frontend agent notes
 
-This folder contains the current frontend MVP for the Kanban project. It is a standalone Next.js + React application that demonstrates the board UI before backend integration.
+Next.js + React UI for the Kanban MVP. It is built as a static export (`output: "export"`) and served by the FastAPI backend; it talks to the backend through same-origin `/api/*` calls.
 
-## Current stack
+## Stack
 
-- Next.js 16
-- React 19
-- TypeScript
-- Vite + Vitest for unit tests
-- Playwright for UI/integration tests
-- @dnd-kit for drag-and-drop interactions
-- Tailwind CSS for styling
+- Next.js 16, React 19, TypeScript
+- Tailwind CSS 4 (colors are CSS variables in `src/app/globals.css`, matching the root AGENTS.md scheme)
+- @dnd-kit for drag and drop
+- Vitest + Testing Library for unit tests, Playwright for e2e
 
-## Project structure
+## Structure
 
-- src/app/page.tsx: renders the home page and mounts the Kanban board.
-- src/components/KanbanBoard.tsx: main board composed of columns and drag-and-drop behavior.
-- src/components/KanbanColumn.tsx: a droppable column that renders cards and the add-card form.
-- src/components/KanbanCard.tsx: cards rendered as sortable items with delete behavior.
-- src/components/NewCardForm.tsx: compact form for adding a card to a column.
-- src/lib/kanban.ts: board data model and drag logic, including moveCard and createId.
-- src/components/KanbanBoard.test.tsx: UI tests for the board behavior.
-- src/lib/kanban.test.ts: tests for drag-and-drop and movement logic.
-- tests/kanban.spec.ts: Playwright test coverage for the front-end demo.
+- `src/app/page.tsx`: fake sign-in (`user` / `password`, frontend-only) and logout; renders `KanbanBoard` once signed in.
+- `src/components/KanbanBoard.tsx`: loads the board from `GET /api/board`, owns board state, and persists every change with `PUT /api/board` through a queue so saves are sent one at a time. Shows nothing editable until the load succeeds. Drag and drop saves on drop only.
+- `src/components/KanbanColumn.tsx`: droppable column with an editable title (saved on Enter or blur, only when changed).
+- `src/components/KanbanCard.tsx`: sortable card with inline edit (title and details) and remove.
+- `src/components/NewCardForm.tsx`: add-card form.
+- `src/components/AiChatSidebar.tsx`: chat with `POST /api/ai/chat`. It waits for pending board saves before sending, and applies a returned board through `onBoardUpdate`.
+- `src/lib/kanban.ts`: board types, `moveCard`, `createId`, and `initialData` (used as a test fixture).
 
-## Current behavior
-
-The app currently shows a single board with five default columns:
-- Backlog
-- Discovery
-- In Progress
-- Review
-- Done
-
-Each column contains cards and supports:
-- renaming a column title
-- adding a new card
-- removing a card
-- dragging a card between columns or within a column
-- chatting with the AI sidebar to request board summaries or board updates, with automatic refresh when the AI returns a valid change
-
-## Important working assumptions
-
-- This is still a frontend-only MVP and does not yet talk to the backend.
-- There is no user login yet; the app is currently visible without authentication.
-- The board state is local in React state and is not persisted.
-- Styling follows the design system defined in the root AGENTS.md.
-
-## Validation commands
-
-Run the frontend test suite from this directory:
+## Commands
 
 ```bash
-npm install
-npm run test
+npm run dev         # UI only; there is no backend on :3000, so the board will not load
+npm run build       # static export to out/
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:e2e    # builds, runs the real backend on :8001 with a temp DB and an OpenRouter stub
 ```
 
-Run the app locally:
+## Testing notes
 
-```bash
-npm run dev
-```
-
-Run the production build:
-
-```bash
-npm run build
-```
-
-## Notes for future work
-
-This frontend is the working baseline for the eventual full app. The later phases will adapt it to:
-- login gating
-- backend API persistence
-- AI chat sidebar integration
-- automatic board refresh after AI updates
-
-Keep changes consistent with the existing design and test structure, and avoid over-engineering the implementation while the project remains in MVP stage.
+- Unit tests mock `fetch`; see `mockBoardApi` in `KanbanBoard.test.tsx`.
+- dnd-kit gives each card `role="button"` with the card's full text as its name. Scope button queries to the card instead of querying the whole page.
+- E2E tests share one database per run, so each test uses different cards.

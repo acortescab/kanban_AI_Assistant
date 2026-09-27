@@ -7,8 +7,11 @@ services:
     env_file:
       - .env
     volumes:
-      - ./.env:/app/.env:ro
+      - kanban-data:/app/data
     ports:
       - "8000:8000"
     environment:
-      APP_ENV: development
+      KANBAN_DB_PATH: /app/data/kanban.db
+
+volumes:
+  kanban-data:

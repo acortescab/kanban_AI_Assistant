@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { BoardData } from "@/lib/kanban";
+import { createId, type BoardData } from "@/lib/kanban";
 
 type ChatMessage = {
   id: string;
@@ -9,34 +9,10 @@ type ChatMessage = {
   content: string;
 };
 
-const BOARD_REFRESH_EVENT = "kanban:board-refresh";
-
-const createMessageId = () =>
-  `msg-${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36)}`;
-
-const getBoardApiUrl = () => {
-  if (typeof window === "undefined") {
-    return "http://localhost/api/board";
-  }
-
-  return new URL("/api/board", window.location.origin).toString();
-};
-
-const getAiChatApiUrl = () => {
-  if (typeof window === "undefined") {
-    return "http://localhost/api/ai/chat";
-  }
-
-  return new URL("/api/ai/chat", window.location.origin).toString();
-};
-
-const loadBoard = async (): Promise<BoardData> => {
-  const response = await fetch(getBoardApiUrl());
-  if (!response.ok) {
-    throw new Error("Failed to load board state.");
-  }
-
-  return (await response.json()) as BoardData;
+type AiChatSidebarProps = {
+  // Resolves once the board's queued saves are written, so the AI sees the latest board.
+  waitForSaves: () => Promise<void>;
+  onBoardUpdate: (board: BoardData) => void;
 };
 
 const readErrorDetail = async (response: Response) => {
@@ -52,10 +28,10 @@ const readErrorDetail = async (response: Response) => {
   return "Unable to send your message right now.";
 };
 
-export const AiChatSidebar = () => {
+export const AiChatSidebar = ({ waitForSaves, onBoardUpdate }: AiChatSidebarProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
-      id: createMessageId(),
+      id: createId("msg"),
       role: "assistant",
       content:
         "Ask me to summarize the board, rename columns, or move cards for you.",
@@ -79,7 +55,7 @@ export const AiChatSidebar = () => {
     }
 
     const userMessage: ChatMessage = {
-      id: createMessageId(),
+      id: createId("msg"),
       role: "user",
       content: question,
     };
@@ -91,8 +67,8 @@ export const AiChatSidebar = () => {
     setIsSending(true);
 
     try {
-      const board = await loadBoard();
-      const response = await fetch(getAiChatApiUrl(), {
+      await waitForSaves();
+      const response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -100,7 +76,6 @@ export const AiChatSidebar = () => {
         body: JSON.stringify({
           question,
           history: conversationHistory,
-          board,
         }),
       });
 
@@ -116,14 +91,14 @@ export const AiChatSidebar = () => {
       setMessages((previous) => [
         ...previous,
         {
-          id: createMessageId(),
+          id: createId("msg"),
           role: "assistant",
           content: data.response,
         },
       ]);
 
       if (data.board) {
-        window.dispatchEvent(new Event(BOARD_REFRESH_EVENT));
+        onBoardUpdate(data.board);
       }
     } catch (caughtError) {
       setError(

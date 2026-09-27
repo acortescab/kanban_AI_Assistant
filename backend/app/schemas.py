@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+FIXED_COLUMN_IDS = ["col-backlog", "col-discovery", "col-progress", "col-review", "col-done"]
+
 
 class CardModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -28,6 +30,10 @@ class BoardDataModel(BaseModel):
 
     @model_validator(mode="after")
     def validate_board_data(self):
+        column_ids = [column.id for column in self.columns]
+        if column_ids != FIXED_COLUMN_IDS:
+            raise ValueError(f"Columns must be exactly {FIXED_COLUMN_IDS} in that order.")
+
         referenced_ids = [card_id for column in self.columns for card_id in column.cardIds]
         duplicate_card_ids = sorted(
             card_id for card_id, count in Counter(referenced_ids).items() if count > 1
@@ -58,7 +64,6 @@ class AIChatRequestModel(BaseModel):
 
     question: str = Field(min_length=1)
     history: list[ChatMessageModel] = Field(default_factory=list)
-    board: BoardDataModel
 
 
 class AIChatResponseModel(BaseModel):
