@@ -5,7 +5,17 @@ from pydantic import ValidationError
 
 from app.openrouter_client import call_openrouter_messages
 from app.schemas import AIChatRequestModel, AIChatResponseModel, BoardDataModel
-from app.service import save_board_record
+from app.service import get_board_record, save_board_record
+
+MAX_HISTORY_MESSAGES = 20
+
+RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "kanban_reply",
+        "schema": AIChatResponseModel.model_json_schema(),
+    },
+}
 
 SYSTEM_PROMPT = (
     "You are a project management assistant for a Kanban board. "
@@ -13,17 +23,24 @@ SYSTEM_PROMPT = (
     '"response" (string) and "board" (either null or a full board replacement). ' 
     "If you change the board, return the complete board JSON. "
     "If you do not change the board, set board to null. "
+    "Board rules: keep exactly the same five columns with the same ids in the same order "
+    "(you may only change column titles); every card in cards must be listed in exactly one "
+    "column's cardIds, and every id in cardIds must exist in cards. "
     "Do not use markdown fences or any extra text."
 )
 
 
-def build_structured_ai_messages(request: AIChatRequestModel) -> list[dict[str, str]]:
-    board_json = json.dumps(request.board.model_dump(), ensure_ascii=False, indent=2)
+def build_structured_ai_messages(
+    request: AIChatRequestModel, board: BoardDataModel
+) -> list[dict[str, str]]:
+    board_json = json.dumps(board.model_dump(), ensure_ascii=False, indent=2)
     system_message = {
         "role": "system",
         "content": f"{SYSTEM_PROMPT}\n\nCurrent board JSON:\n{board_json}",
     }
-    history_messages = [message.model_dump() for message in request.history]
+    history_messages = [
+        message.model_dump() for message in request.history[-MAX_HISTORY_MESSAGES:]
+    ]
     user_message = {"role": "user", "content": request.question.strip()}
     return [system_message, *history_messages, user_message]
 
@@ -76,8 +93,8 @@ def parse_structured_ai_response(content: str) -> AIChatResponseModel:
 
 
 def generate_structured_ai_response(request: AIChatRequestModel) -> AIChatResponseModel:
-    messages = build_structured_ai_messages(request)
-    content = call_openrouter_messages(messages)
+    messages = build_structured_ai_messages(request, get_board_record())
+    content = call_openrouter_messages(messages, response_format=RESPONSE_FORMAT)
     response = parse_structured_ai_response(content)
 
     if response.board is not None:

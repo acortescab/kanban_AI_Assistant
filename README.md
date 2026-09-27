@@ -15,7 +15,7 @@ Local-first Kanban MVP with a Next.js frontend, a FastAPI backend, SQLite persis
 2. Start the stack:
 
 ```bash
-. scripts/start.sh
+./scripts/start.sh        # Windows: scripts\start.ps1 or scripts\start.bat
 ```
 
 3. Open the app at `http://localhost:8000`.
@@ -23,8 +23,10 @@ Local-first Kanban MVP with a Next.js frontend, a FastAPI backend, SQLite persis
 To stop the stack:
 
 ```bash
-. scripts/stop.sh
+./scripts/stop.sh         # Windows: scripts\stop.ps1 or scripts\stop.bat
 ```
+
+Board data is stored in the `kanban-data` Docker volume and survives restarts.
 
 ## Configuration
 
@@ -38,15 +40,19 @@ Frontend:
 
 ```bash
 cd frontend
+npm run lint
+npm run typecheck
 npm run test:unit
 npm run test:e2e
 ```
+
+The e2e suite builds the frontend and serves it through the backend with `uv`, so `uv` must be installed.
 
 Backend:
 
 ```bash
 cd backend
-../.venv/Scripts/python.exe -m pytest
+uv run pytest
 ```
 
 ## Project layout

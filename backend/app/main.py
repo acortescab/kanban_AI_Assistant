@@ -1,16 +1,14 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.ai_flow import generate_structured_ai_response
 from app.database import init_database
-from app.openrouter_client import call_openrouter
+from app.openrouter_client import MODEL, call_openrouter
 from app.schemas import AIChatRequestModel, AIChatResponseModel, BoardDataModel
 from app.service import get_board_record, save_board_record
-
-app = FastAPI(title="Kanban AI Assistant")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_CANDIDATES = [
@@ -19,18 +17,18 @@ STATIC_CANDIDATES = [
 ]
 
 STATIC_DIR = next(
-    (
-        candidate
-        for candidate in STATIC_CANDIDATES
-        if candidate.exists() and (candidate / "index.html").exists()
-    ),
+    (candidate for candidate in STATIC_CANDIDATES if (candidate / "index.html").exists()),
     None,
 )
 
-if STATIC_DIR is not None:
-    app.mount("/_next", StaticFiles(directory=STATIC_DIR / "_next"), name="next-assets")
 
-init_database()
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_database()
+    yield
+
+
+app = FastAPI(title="Kanban AI Assistant", lifespan=lifespan)
 
 
 @app.get("/api/health")
@@ -39,13 +37,13 @@ def health_check() -> dict[str, str]:
 
 
 @app.get("/api/board")
-def get_board() -> dict[str, object]:
-    return get_board_record().model_dump()
+def get_board() -> BoardDataModel:
+    return get_board_record()
 
 
 @app.put("/api/board")
-def save_board(board: BoardDataModel) -> dict[str, object]:
-    return save_board_record(board).model_dump()
+def save_board(board: BoardDataModel) -> BoardDataModel:
+    return save_board_record(board)
 
 
 @app.post("/api/ai/test")
@@ -58,34 +56,20 @@ def ai_test(payload: dict[str, str]) -> dict[str, object]:
         response = call_openrouter(prompt)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:  # pragma: no cover - defensive safety net
-        raise HTTPException(
-            status_code=503,
-            detail=f"OpenRouter call failed: {exc}",
-        ) from exc
 
-    return {"ok": True, "response": response, "model": "qwen/qwen3.8-27b:free"}
+    return {"ok": True, "response": response, "model": MODEL}
 
 
-@app.post("/api/ai/chat", response_model=AIChatResponseModel)
+@app.post("/api/ai/chat")
 def ai_chat(request: AIChatRequestModel) -> AIChatResponseModel:
     try:
-        response = generate_structured_ai_response(request)
+        return generate_structured_ai_response(request)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except Exception as exc:  # pragma: no cover - defensive safety net
-        raise HTTPException(
-            status_code=503,
-            detail=f"OpenRouter call failed: {exc}",
-        ) from exc
-
-    return response
 
 
-@app.get("/")
-def read_root() -> FileResponse:
-    if STATIC_DIR is None or not (STATIC_DIR / "index.html").exists():
-        raise FileNotFoundError("Frontend build is not available")
-    return FileResponse(STATIC_DIR / "index.html")
+# Mounted last so the API routes above take precedence over the static site.
+if STATIC_DIR is not None:
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="frontend")

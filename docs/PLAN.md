@@ -300,7 +300,7 @@ Success criteria:
 
 ## Current project baseline
 
-The frontend already includes a working Kanban demo built with Next.js and React, with drag-and-drop, column renaming, add-card, and delete-card behavior. The current codebase is in frontend/ and includes a small Vitest suite and Playwright tests for the demo. This baseline should be preserved while the app is progressively integrated with the backend and AI flow.
+All ten parts are complete, and the follow-up fixes from docs/code_review.md have been applied. The app runs as a single Docker container. The board persists in SQLite on the `kanban-data` volume, supports add, edit, delete, rename and drag-and-drop, and the AI sidebar can read and change it. Tests: backend pytest, frontend Vitest, and a Playwright suite that runs against the real backend with an OpenRouter stub.
 
 ## Completion gate before moving to implementation
 
