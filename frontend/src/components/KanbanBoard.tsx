@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import clsx from "clsx";
 import {
   DndContext,
   DragOverlay,
@@ -17,60 +18,85 @@ import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { AiChatSidebar } from "@/components/AiChatSidebar";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
+import { BoardActivity } from "@/components/BoardActivity";
+import { api, ApiError, type BoardMember, type BoardSummary } from "@/lib/api";
+import { BoardMembers } from "@/components/BoardMembers";
+import { CardFilterBar } from "@/components/CardFilterBar";
 import {
+  addColumn,
+  boardLabels,
   createId,
+  EMPTY_FILTER,
   findColumnId,
+  isFilterActive,
+  isOverdue,
+  matchesFilter,
+  MAX_COLUMNS,
   moveCard,
+  moveColumn,
+  newCard,
+  removeColumn,
+  todayIso,
   type BoardData,
+  type Card,
+  type CardFilter,
 } from "@/lib/kanban";
 
-const loadBoard = async (): Promise<BoardData | null> => {
+type KanbanBoardProps = {
+  summary: BoardSummary;
+  currentUserId: string;
+  onSummaryChange: (summary: BoardSummary) => void;
+  onLeft: () => void;
+};
+
+const loadBoard = async (boardId: string) => {
   try {
-    const response = await fetch("/api/board");
-    if (!response.ok) {
-      return null;
-    }
-    return (await response.json()) as BoardData;
+    return await api.getBoardData(boardId);
   } catch {
     return null;
   }
 };
 
-const saveBoard = async (board: BoardData) => {
-  const response = await fetch("/api/board", {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(board),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to save board changes.");
-  }
-
-  return response.json();
-};
-
-export const KanbanBoard = () => {
+export const KanbanBoard = ({ summary, currentUserId, onSummaryChange, onLeft }: KanbanBoardProps) => {
+  const boardId = summary.id;
   const [board, setBoard] = useState<BoardData | null>(null);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+  const [isChatOpen, setIsChatOpen] = useState(true);
+  const [isMembersOpen, setIsMembersOpen] = useState(false);
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const [members, setMembers] = useState<BoardMember[]>([]);
+  const [filter, setFilter] = useState<CardFilter>(EMPTY_FILTER);
   const [completedSaves, setCompletedSaves] = useState(0);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingSaves = useRef(0);
+  // The server version the next save is based on (sent as If-Match).
+  const version = useRef(0);
+  // Bumped whenever the board on screen is replaced from the server (a failed save or an
+  // AI edit). Saves queued before that were built on the replaced board, so they are dropped.
+  const generation = useRef(0);
+  // Counts board changes the activity feed should pick up (saves, AI edits, reloads).
+  const [changeCount, setChangeCount] = useState(0);
+
+  const trackVersion = (next: number) => {
+    version.current = next;
+    setChangeCount((count) => count + 1);
+  };
 
   useEffect(() => {
-    void loadBoard().then((loaded) => {
+    void loadBoard(boardId).then((loaded) => {
       if (loaded) {
-        setBoard(loaded);
+        version.current = loaded.version;
+        setBoard(loaded.board);
       } else {
         setError("Could not load the board. Please refresh the page.");
       }
     });
-  }, []);
+    // Needed for assignee names and choices. Without it cards still work, just unnamed.
+    api.listMembers(boardId).then(setMembers, () => setMembers([]));
+  }, [boardId]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -81,7 +107,7 @@ export const KanbanBoard = () => {
 
   if (!board) {
     return (
-      <main className="flex min-h-screen items-center justify-center px-6">
+      <main className="flex flex-1 items-center justify-center px-6 py-12">
         <p
           className="text-sm font-medium text-[var(--gray-text)]"
           role={error ? "alert" : undefined}
@@ -92,33 +118,80 @@ export const KanbanBoard = () => {
     );
   }
 
-  // Every write goes through this queue, including the AI's, so the last write
-  // enqueued is always the last one persisted and the screen matches the database.
+  // Every edit goes through this queue, so saves are sent one at a time, each based on the
+  // version the previous one produced. The server refuses a save based on an old version
+  // (someone else changed the board), and then the board is reloaded instead of overwritten.
   const updateBoard = (nextBoard: BoardData) => {
     setBoard(nextBoard);
     setError("");
     pendingSaves.current += 1;
     setIsSaving(true);
+    const basedOn = generation.current;
     saveQueue.current = saveQueue.current
-      .then(() => saveBoard(nextBoard))
-      .then(() => setCompletedSaves((count) => count + 1))
-      .catch(async () => {
+      .then(async () => {
+        if (basedOn !== generation.current) {
+          return;
+        }
+        const saved = await api.saveBoardData(boardId, nextBoard, version.current);
+        trackVersion(saved.version);
+        setCompletedSaves((count) => count + 1);
+      })
+      .catch(async (caught) => {
         // The screen is showing changes that were never written, so drop them
         // and fall back to the last state the server actually stored.
-        const reloaded = await loadBoard();
+        generation.current += 1;
+        const reloaded = await loadBoard(boardId);
+        const conflict = caught instanceof ApiError && caught.status === 409;
         setError(
-          reloaded
-            ? "Could not save your last change. The board was reloaded from the server, so unsaved changes were lost."
-            : "Could not save your last change. Please refresh the page."
+          !reloaded
+            ? "Could not save your last change. Please refresh the page."
+            : conflict
+              ? "Someone else changed this board, so your last change was not saved. The latest version is shown."
+              : "Could not save your last change. The board was reloaded from the server, so unsaved changes were lost."
         );
         if (reloaded) {
-          setBoard(reloaded);
+          trackVersion(reloaded.version);
+          setBoard(reloaded.board);
         }
       })
       .finally(() => {
         pendingSaves.current -= 1;
         setIsSaving(pendingSaves.current > 0);
       });
+  };
+
+  // The AI already saved this board on the server, at this version.
+  const applyAiBoard = (nextBoard: BoardData, nextVersion: number) => {
+    generation.current += 1;
+    trackVersion(nextVersion);
+    setBoard(nextBoard);
+    setError("");
+  };
+
+  const handleMembersChange = (next: BoardMember[]) => {
+    const removed = next.length < members.length;
+    setMembers(next);
+    onSummaryChange({ ...summary, memberCount: next.length - 1 });
+    if (removed) {
+      // The server unassigned the removed person's cards and moved the version on, so
+      // reload once the saves already queued have gone through.
+      saveQueue.current = saveQueue.current.then(async () => {
+        const reloaded = await loadBoard(boardId);
+        if (reloaded) {
+          generation.current += 1;
+          trackVersion(reloaded.version);
+          setBoard(reloaded.board);
+        }
+      });
+    }
+  };
+
+  const saveSummary = async (changes: { title?: string; description?: string }) => {
+    try {
+      onSummaryChange(await api.updateBoard(boardId, changes));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not update the board.");
+    }
   };
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -160,7 +233,7 @@ export const KanbanBoard = () => {
     updateBoard({
       cards: {
         ...board.cards,
-        [id]: { id, title, details },
+        [id]: newCard(id, title, details),
       },
       columns: board.columns.map((column) =>
         column.id === columnId
@@ -170,10 +243,10 @@ export const KanbanBoard = () => {
     });
   };
 
-  const handleEditCard = (cardId: string, title: string, details: string) => {
+  const handleEditCard = (card: Card) => {
     updateBoard({
       ...board,
-      cards: { ...board.cards, [cardId]: { id: cardId, title, details } },
+      cards: { ...board.cards, [card.id]: card },
     });
   };
 
@@ -194,101 +267,257 @@ export const KanbanBoard = () => {
   };
 
   const activeCard = activeCardId ? board.cards[activeCardId] : null;
+  const cards = Object.values(board.cards);
+  const today = todayIso();
+  const overdueCount = cards.filter((card) => isOverdue(card, today)).length;
+  const highCount = cards.filter((card) => card.priority === "high").length;
+  const labels = boardLabels(board);
+  // A label filter outlives the label (the last card using it was edited or deleted); drop it
+  // rather than hiding every card behind a choice the select can no longer show.
+  // The same goes for an assignee who has since left the board.
+  const activeFilter: CardFilter = {
+    ...filter,
+    label: labels.includes(filter.label) ? filter.label : "",
+    assignee: members.some((member) => member.userId === filter.assignee) ? filter.assignee : "",
+  };
+  const filtering = isFilterActive(activeFilter);
+  const isVisible = (cardId: string) => matchesFilter(board.cards[cardId], activeFilter, today);
+  const visibleCount = filtering ? cards.filter((card) => isVisible(card.id)).length : cards.length;
+
+  const commitSummaryField = (
+    input: HTMLInputElement,
+    field: "title" | "description",
+    current: string
+  ) => {
+    const value = input.value.trim();
+    if (field === "title" && !value) {
+      input.value = current;
+      return;
+    }
+    input.value = value;
+    if (value !== current) {
+      void saveSummary({ [field]: value });
+    }
+  };
 
   return (
     <div
-      className="relative overflow-hidden"
+      className="flex min-h-0 flex-1 flex-col"
       data-testid="board"
       data-saves-completed={completedSaves}
     >
-      <div className="pointer-events-none absolute left-0 top-0 h-[420px] w-[420px] -translate-x-1/3 -translate-y-1/3 rounded-full bg-[radial-gradient(circle,_rgba(32,157,215,0.25)_0%,_rgba(32,157,215,0.05)_55%,_transparent_70%)]" />
-      <div className="pointer-events-none absolute bottom-0 right-0 h-[520px] w-[520px] translate-x-1/4 translate-y-1/4 rounded-full bg-[radial-gradient(circle,_rgba(117,57,145,0.18)_0%,_rgba(117,57,145,0.05)_55%,_transparent_75%)]" />
-
-      <main className="relative mx-auto flex min-h-screen max-w-[1800px] flex-col gap-10 px-6 pb-16 pt-12">
-        <header className="flex flex-col gap-6 rounded-[32px] border border-[var(--stroke)] bg-white/80 p-8 shadow-[var(--shadow)] backdrop-blur">
-          <div className="flex flex-wrap items-start justify-between gap-6">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[var(--gray-text)]">
-                Single Board Kanban
-              </p>
-              <h1 className="mt-3 font-display text-4xl font-semibold text-[var(--navy-dark)]">
-                Kanban Studio
-              </h1>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--gray-text)]">
-                Keep momentum visible. Rename columns, drag cards between stages,
-                and capture quick notes without getting buried in settings.
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              {isSaving ? (
-                <div className="rounded-full border border-[var(--stroke)] bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--gray-text)]">
-                  Saving
-                </div>
-              ) : null}
-              <div className="rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] px-5 py-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[var(--gray-text)]">
-                  Focus
-                </p>
-                <p className="mt-2 text-lg font-semibold text-[var(--primary-blue)]">
-                  One board. Five columns. Zero clutter.
-                </p>
-              </div>
-            </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-4 sm:px-6">
+        <div className="min-w-0 flex-1">
+          <input
+            key={`title-${summary.title}`}
+            defaultValue={summary.title}
+            aria-label="Board title"
+            maxLength={100}
+            onBlur={(event) => commitSummaryField(event.currentTarget, "title", summary.title)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+            }}
+            className="w-full max-w-xl rounded-md bg-transparent px-1 font-display text-lg font-semibold text-[var(--navy-dark)] outline-none transition hover:bg-white focus:bg-white"
+          />
+          <input
+            key={`description-${summary.description}`}
+            defaultValue={summary.description}
+            aria-label="Board description"
+            placeholder="Add a description"
+            maxLength={500}
+            onBlur={(event) =>
+              commitSummaryField(event.currentTarget, "description", summary.description)
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+            }}
+            className="w-full max-w-xl rounded-md bg-transparent px-1 text-sm text-[var(--gray-text)] outline-none transition placeholder:text-[rgba(136,136,136,0.7)] hover:bg-white focus:bg-white"
+          />
+          {summary.isOwner ? null : (
+            <p className="px-1 text-xs text-[var(--primary-blue)]" data-testid="shared-by">
+              Shared with you by {summary.ownerName}
+            </p>
+          )}
+        </div>
+        <dl className="flex items-center gap-4 text-xs text-[var(--gray-text)]" data-testid="board-stats">
+          <div className="flex items-baseline gap-1">
+            <dt className="sr-only">Cards</dt>
+            <dd className="text-base font-semibold text-[var(--navy-dark)]">{cards.length}</dd>
+            <span aria-hidden="true">cards</span>
           </div>
-          <div className="flex flex-wrap items-center gap-4">
-            {board.columns.map((column) => (
-              <div
-                key={column.id}
-                className="flex items-center gap-2 rounded-full border border-[var(--stroke)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--navy-dark)]"
-              >
-                <span className="h-2 w-2 rounded-full bg-[var(--accent-yellow)]" />
-                {column.title}
-              </div>
-            ))}
+          <div className="flex items-baseline gap-1">
+            <dt className="sr-only">High priority</dt>
+            <dd className="text-base font-semibold text-[var(--secondary-purple)]">{highCount}</dd>
+            <span aria-hidden="true">high</span>
           </div>
-        </header>
-
-        {error ? (
-          <p className="text-sm font-medium text-red-600" role="alert">
-            {error}
-          </p>
-        ) : null}
-
-        {/* The chat sits beside the board only from 2xl (1536px); narrower screens give the columns the full width. */}
-        <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_360px]">
-          <DndContext
-            sensors={sensors}
-            collisionDetection={pointerWithin}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragEnd={handleDragEnd}
+          <div className="flex items-baseline gap-1">
+            <dt className="sr-only">Overdue</dt>
+            <dd
+              className={clsx(
+                "text-base font-semibold",
+                overdueCount > 0 ? "text-red-600" : "text-[var(--navy-dark)]"
+              )}
+            >
+              {overdueCount}
+            </dd>
+            <span aria-hidden="true">overdue</span>
+          </div>
+        </dl>
+        <div className="flex items-center gap-3">
+          {isSaving ? (
+            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--gray-text)]">
+              Saving
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setIsMembersOpen((open) => !open)}
+            aria-pressed={isMembersOpen}
+            className={clsx(
+              "flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.15em] transition",
+              isMembersOpen
+                ? "border-[var(--primary-blue)] bg-[var(--primary-blue)] text-white"
+                : "border-[var(--stroke)] bg-white text-[var(--primary-blue)] hover:border-[var(--primary-blue)]"
+            )}
           >
-            <section className="grid gap-6 lg:grid-cols-5">
-              {board.columns.map((column) => (
-                <KanbanColumn
-                  key={column.id}
-                  column={column}
-                  cards={column.cardIds.map((cardId) => board.cards[cardId])}
-                  isDropTarget={dragOverColumnId === column.id}
-                  onRename={handleRenameColumn}
-                  onAddCard={handleAddCard}
-                  onDeleteCard={handleDeleteCard}
-                  onEditCard={handleEditCard}
-                />
-              ))}
-            </section>
-            <DragOverlay>
-              {activeCard ? (
-                <div className="w-[260px]">
-                  <KanbanCardPreview card={activeCard} />
-                </div>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
+            Members
+            <span className="rounded-full bg-black/10 px-1.5 text-[10px] tracking-normal" data-testid="member-count">
+              {summary.memberCount + 1}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsActivityOpen((open) => !open)}
+            aria-pressed={isActivityOpen}
+            className={clsx(
+              "rounded-full border px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.15em] transition",
+              isActivityOpen
+                ? "border-[var(--navy-dark)] bg-[var(--navy-dark)] text-white"
+                : "border-[var(--stroke)] bg-white text-[var(--navy-dark)] hover:border-[var(--navy-dark)]"
+            )}
+          >
+            Activity
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsChatOpen((open) => !open)}
+            aria-pressed={isChatOpen}
+            className={clsx(
+              "rounded-full border px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.15em] transition",
+              isChatOpen
+                ? "border-[var(--secondary-purple)] bg-[var(--secondary-purple)] text-white hover:brightness-110"
+                : "border-[var(--stroke)] bg-white text-[var(--secondary-purple)] hover:border-[var(--secondary-purple)]"
+            )}
+          >
+            AI chat
+          </button>
+        </div>
+      </div>
 
+      {isMembersOpen ? (
+        <BoardMembers
+          boardId={boardId}
+          members={members}
+          isOwner={summary.isOwner}
+          currentUserId={currentUserId}
+          onMembersChange={handleMembersChange}
+          onLeft={onLeft}
+        />
+      ) : null}
+
+      {isActivityOpen ? (
+        <BoardActivity
+          boardId={boardId}
+          // Any logged change moves one of these: a board change, a rename, a member.
+          refreshKey={`${changeCount}|${summary.title}|${summary.description}|${members.length}`}
+        />
+      ) : null}
+
+      <CardFilterBar
+        filter={activeFilter}
+        labels={labels}
+        members={members}
+        currentUserId={currentUserId}
+        visibleCount={visibleCount}
+        totalCount={cards.length}
+        onChange={setFilter}
+      />
+
+      {error ? (
+        <p className="px-4 pt-3 text-sm font-medium text-red-600 sm:px-6" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      {/* From lg the board and chat fill the viewport side by side and scroll internally;
+          narrower screens stack them and scroll the columns horizontally. */}
+      <main className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:px-6 lg:flex-row">
+        <DndContext
+          sensors={sensors}
+          collisionDetection={pointerWithin}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          <section className="flex min-h-0 min-w-0 flex-1 gap-4 overflow-x-auto pb-1">
+            {board.columns.map((column, index) => (
+              <KanbanColumn
+                key={column.id}
+                column={column}
+                cards={column.cardIds.filter(isVisible).map((cardId) => board.cards[cardId])}
+                isFiltered={filtering}
+                today={today}
+                isDropTarget={dragOverColumnId === column.id}
+                members={members}
+                canDelete={board.columns.length > 1 && column.cardIds.length === 0}
+                canMoveLeft={index > 0}
+                canMoveRight={index < board.columns.length - 1}
+                onRename={handleRenameColumn}
+                onMove={(columnId, offset) => updateBoard(moveColumn(board, columnId, offset))}
+                onDelete={(columnId) => updateBoard(removeColumn(board, columnId))}
+                onAddCard={handleAddCard}
+                onDeleteCard={handleDeleteCard}
+                onEditCard={handleEditCard}
+              />
+            ))}
+            {board.columns.length < MAX_COLUMNS ? (
+              <button
+                type="button"
+                onClick={() => updateBoard(addColumn(board, createId("col"), "New column"))}
+                className="flex w-12 shrink-0 items-start justify-center self-start rounded-2xl border border-dashed border-[rgba(3,33,71,0.2)] py-4 text-[var(--primary-blue)] transition hover:border-[var(--primary-blue)] hover:bg-[rgba(32,157,215,0.05)]"
+                aria-label="Add column"
+                title="Add column"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 fill-none stroke-current stroke-[2.5] [stroke-linecap:round]"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+            ) : null}
+          </section>
+          <DragOverlay>
+            {activeCard ? (
+              <div className="w-[260px]">
+                <KanbanCardPreview card={activeCard} />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+
+        {/* Hidden rather than unmounted, so closing the chat keeps its conversation. */}
+        <div className="contents" hidden={!isChatOpen}>
           <AiChatSidebar
+            boardId={boardId}
             waitForSaves={() => saveQueue.current}
-            onBoardUpdate={updateBoard}
+            onBoardUpdate={applyAiBoard}
           />
         </div>
       </main>

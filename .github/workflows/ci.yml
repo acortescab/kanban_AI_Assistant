@@ -41,7 +41,8 @@ jobs:
 
       - name: Backend tests
         working-directory: backend
-        run: uv run pytest
+        # Fails the build if backend coverage drops below 90%.
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=90
 
       - name: Lint
         working-directory: frontend
@@ -51,9 +52,10 @@ jobs:
         working-directory: frontend
         run: npm run typecheck
 
-      - name: Frontend unit tests
+      - name: Frontend unit tests with coverage
         working-directory: frontend
-        run: npm run test:unit
+        # Thresholds live in vitest.config.ts.
+        run: npm run test:coverage
 
       - name: Install Playwright Chromium
         working-directory: frontend

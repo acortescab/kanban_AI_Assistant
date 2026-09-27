@@ -22,9 +22,14 @@ from app.ai_flow import (
 )
 from app.openrouter_client import call_openrouter, call_openrouter_messages, get_openrouter_api_key
 from app.schemas import AIChatRequestModel, ChatMessageModel
-from app.service import get_board_record
+from app.database import DEMO_BOARD_ID, DEMO_USER_ID
+from app.service import read_board
 
 pytestmark = pytest.mark.live
+
+
+def demo_board():
+    return read_board(DEMO_USER_ID, DEMO_BOARD_ID)[0]
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +64,7 @@ def test_model_answers_a_simple_prompt():
 
 
 def test_model_returns_a_parsable_board_when_asked_to_move_a_card():
-    board = get_board_record()
+    board = demo_board()
     request = AIChatRequestModel(
         question="Move the card titled 'Prototype analytics view' to the Done column.",
         history=[ChatMessageModel(role="assistant", content="I can help with that.")],
@@ -78,11 +83,11 @@ def test_model_returns_a_parsable_board_when_asked_to_move_a_card():
 
 
 def test_chat_route_applies_a_board_change_end_to_end():
-    before = get_board_record()
+    before = demo_board()
     request = AIChatRequestModel(question="Add a new card titled 'Live check' to Backlog.")
 
     try:
-        response = generate_structured_ai_response(request)
+        response, _version = generate_structured_ai_response(request, DEMO_USER_ID, DEMO_BOARD_ID)
     except RuntimeError as exc:
         if "rate limited" in str(exc):
             pytest.skip(f"OpenRouter free pool is busy: {exc}")
@@ -90,6 +95,6 @@ def test_chat_route_applies_a_board_change_end_to_end():
 
     assert response.response.strip()
     if response.board is not None:
-        after = get_board_record()
+        after = demo_board()
         assert "Live check" in {card.title for card in after.cards.values()}
         assert len(after.cards) >= len(before.cards)

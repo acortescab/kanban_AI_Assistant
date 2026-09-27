@@ -1,34 +1,36 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
-import { AiChatSidebar } from "@/components/AiChatSidebar";
+import { AiChatSidebar, MAX_SENT_HISTORY } from "@/components/AiChatSidebar";
 import { initialData } from "@/lib/kanban";
+import { createFakeServer, failWith, type FakeServer } from "@/test/fakeServer";
+
+let server: FakeServer;
+
+beforeEach(() => {
+  server = createFakeServer();
+});
 
 const renderSidebar = () => {
   const onBoardUpdate = vi.fn();
   render(
-    <AiChatSidebar waitForSaves={() => Promise.resolve()} onBoardUpdate={onBoardUpdate} />
+    <AiChatSidebar
+      boardId="board-1"
+      waitForSaves={() => Promise.resolve()}
+      onBoardUpdate={onBoardUpdate}
+    />
   );
   return { onBoardUpdate };
 };
 
 const sendMessage = async (text: string) => {
-  await userEvent.type(
-    screen.getByPlaceholderText(/ask me to move a card or explain the board/i),
-    text
-  );
+  await userEvent.type(screen.getByPlaceholderText(/ask me to move a card or explain the board/i), text);
   await userEvent.click(screen.getByRole("button", { name: /send message/i }));
 };
 
 describe("AiChatSidebar", () => {
-  it("sends the question with history and applies the returned board", async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      ({
-        ok: true,
-        json: async () => ({ response: "I moved the card.", board: initialData }),
-      }) as Response
-    );
-    global.fetch = fetchMock;
+  it("sends the question with history to the board's route and applies the returned board", async () => {
+    server.chatReply = { response: "I moved the card.", board: initialData };
     const { onBoardUpdate } = renderSidebar();
 
     expect(screen.getByText(/ask me to summarize the board/i)).toBeInTheDocument();
@@ -37,26 +39,24 @@ describe("AiChatSidebar", () => {
 
     expect(screen.getByText("Move card-1 to Done")).toBeInTheDocument();
     expect(await screen.findByText("I moved the card.")).toBeInTheDocument();
-    expect(onBoardUpdate).toHaveBeenCalledWith(initialData);
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/ai/chat");
-    const body = JSON.parse(String(init?.body));
-    expect(body).toEqual({
-      question: "Move card-1 to Done",
-      history: [
-        {
-          role: "assistant",
-          content: "Ask me to summarize the board, rename columns, or move cards for you.",
-        },
-      ],
-    });
+    // The version is the one the server saved the AI's board at (from the ETag).
+    expect(onBoardUpdate).toHaveBeenCalledWith(initialData, 1);
+    expect(server.chatRequests).toEqual([
+      {
+        boardId: "board-1",
+        question: "Move card-1 to Done",
+        history: [
+          {
+            role: "assistant",
+            content: "Ask me to summarize the board, rename columns, or move cards for you.",
+          },
+        ],
+      },
+    ]);
   });
 
   it("does not update the board when the AI makes no change", async () => {
-    global.fetch = vi.fn<typeof fetch>(async () =>
-      ({ ok: true, json: async () => ({ response: "There are 2 cards.", board: null }) }) as Response
-    );
+    server.chatReply = { response: "There are 2 cards.", board: null };
     const { onBoardUpdate } = renderSidebar();
 
     await sendMessage("How many cards?");
@@ -66,18 +66,34 @@ describe("AiChatSidebar", () => {
   });
 
   it("shows the backend error detail when the AI request fails", async () => {
-    global.fetch = vi.fn<typeof fetch>(async () =>
-      ({
-        ok: false,
-        json: async () => ({
-          detail: "OpenRouter is rate limited right now. Please try again in a moment.",
-        }),
-      }) as Response
-    );
+    server.interceptor = () =>
+      failWith(503, "OpenRouter is rate limited right now. Please try again in a moment.");
     renderSidebar();
 
     await sendMessage("Move card-1 to Done");
 
     expect(await screen.findByText(/rate limited right now/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /send message/i })).toBeEnabled();
+  });
+
+  it("ignores an empty message", async () => {
+    renderSidebar();
+
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+
+    expect(server.chatRequests).toHaveLength(0);
+  });
+
+  it("caps the history it sends in a long conversation", async () => {
+    renderSidebar();
+
+    for (let turn = 0; turn < 12; turn += 1) {
+      await sendMessage(`Question ${turn}`);
+      await waitFor(() => expect(screen.getAllByText("OK")).toHaveLength(turn + 1));
+    }
+
+    const last = server.chatRequests.at(-1)!;
+    expect(last.history).toHaveLength(MAX_SENT_HISTORY);
+    expect(last.history.at(-1)).toEqual({ role: "assistant", content: "OK" });
   });
 });

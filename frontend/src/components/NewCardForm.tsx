@@ -21,7 +21,7 @@ export const NewCardForm = ({ onAdd }: NewCardFormProps) => {
   };
 
   return (
-    <div className="mt-4">
+    <div className="mt-3">
       {isOpen ? (
         <form onSubmit={handleSubmit} className="space-y-3">
           <input
@@ -65,8 +65,16 @@ export const NewCardForm = ({ onAdd }: NewCardFormProps) => {
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="w-full rounded-full border border-dashed border-[var(--stroke)] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--primary-blue)] transition hover:border-[var(--primary-blue)]"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[rgba(3,33,71,0.15)] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--primary-blue)] transition hover:border-[var(--primary-blue)] hover:bg-[rgba(32,157,215,0.05)]"
         >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5 fill-none stroke-current stroke-[2.5] [stroke-linecap:round]"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
           Add a card
         </button>
       )}

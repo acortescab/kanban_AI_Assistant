@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from app.openrouter_client import call_openrouter_messages
 from app.schemas import AIChatRequestModel, AIChatResponseModel, BoardDataModel
-from app.service import get_board_record, save_board_record
+from app.service import board_participants, read_board, save_board_record
 
 MAX_HISTORY_MESSAGES = 20
 
@@ -27,24 +27,33 @@ SYSTEM_PROMPT = (
     '"response" (string) and "board" (either null or a full board replacement). '
     "If you change the board, return the complete board JSON. "
     "If you do not change the board, set board to null. "
-    "Board rules: keep exactly the same five columns with the same ids in the same order "
-    "(you may only change column titles); every card in cards must be listed in exactly one "
-    "column's cardIds, and every id in cardIds must exist in cards. "
+    "Board rules: keep existing column ids unchanged; you may rename, reorder or add columns "
+    '(new columns need a new unique id such as "col-<short-name>"), with at most 12 columns. '
+    "Every card in cards must be listed in exactly one column's cardIds, every id in cardIds "
+    "must exist in cards, and each key in cards must equal that card's id. "
+    'Cards have: id, title, details, priority ("low", "medium" or "high"), '
+    'dueDate ("YYYY-MM-DD" or null), labels (a list of short strings) and assigneeId '
+    "(null or the id of one of the people on the board, listed below). "
     "You may add, edit, move and reorder cards, but you must never remove a card: "
     "keep every card id you were given. If the user asks for a card to be deleted, "
-    "explain that they can remove it themselves with the card's Remove button, and set "
+    "explain that they can remove it themselves with the card's delete button, and set "
     "board to null. "
     "Do not use markdown fences or any extra text."
 )
 
 
 def build_structured_ai_messages(
-    request: AIChatRequestModel, board: BoardDataModel
+    request: AIChatRequestModel, board: BoardDataModel, people: dict[str, str] | None = None
 ) -> list[dict[str, str]]:
-    board_json = json.dumps(board.model_dump(), ensure_ascii=False, indent=2)
+    board_json = json.dumps(board.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    people_json = json.dumps(people or {}, ensure_ascii=False)
+    # The board JSON stays last: the e2e OpenRouter stub reads everything after its marker.
     system_message = {
         "role": "system",
-        "content": f"{SYSTEM_PROMPT}\n\nCurrent board JSON:\n{board_json}",
+        "content": (
+            f"{SYSTEM_PROMPT}\n\nPeople on the board (assigneeId to name):\n{people_json}"
+            f"\n\nCurrent board JSON:\n{board_json}"
+        ),
     }
     history_messages = [
         message.model_dump() for message in request.history[-MAX_HISTORY_MESSAGES:]
@@ -110,14 +119,21 @@ def reject_removed_cards(board: BoardDataModel, sent_board: BoardDataModel) -> N
         )
 
 
-def generate_structured_ai_response(request: AIChatRequestModel) -> AIChatResponseModel:
-    board = get_board_record()
-    messages = build_structured_ai_messages(request, board)
+def generate_structured_ai_response(
+    request: AIChatRequestModel, user_id: str, board_id: str
+) -> tuple[AIChatResponseModel, int]:
+    """Returns the reply and the board version after it (unchanged when the AI edits nothing)."""
+    board, version = read_board(user_id, board_id)
+    messages = build_structured_ai_messages(request, board, board_participants(user_id, board_id))
     content = call_openrouter_messages(messages, response_format=RESPONSE_FORMAT)
     response = parse_structured_ai_response(content)
 
     if response.board is not None:
         reject_removed_cards(response.board, board)
-        save_board_record(response.board)
+        # The model call can take minutes. Saving against the version it read means an edit
+        # someone made in the meantime is refused here instead of silently overwritten.
+        version = save_board_record(
+            user_id, board_id, response.board, expected_version=version, via_ai=True
+        )
 
-    return response
+    return response, version

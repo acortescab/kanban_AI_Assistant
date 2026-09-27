@@ -1,13 +1,20 @@
 # Kanban AI Assistant
 
-Local-first Kanban MVP with a Next.js frontend, a FastAPI backend, SQLite persistence, and an AI chat sidebar powered by OpenRouter.
+Local-first project management app with a Next.js frontend, a FastAPI backend, SQLite persistence, and an AI chat sidebar powered by OpenRouter.
 
 ## What it does
 
-- Single-user sign-in with the hardcoded credentials `user` / `password`
-- Five-column Kanban board with drag-and-drop, card editing, and persistence
-- AI sidebar chat that can answer questions about the board and request board updates
-- Backend health and board APIs served from the same local app
+- Accounts: register, sign in (session cookie), change display name and password, delete your account
+- A demo admin account is seeded: `user` / `password`
+- Multiple boards per user: create, rename, describe, switch, delete
+- Board sharing by username; members edit together, and a change based on an outdated copy is refused (the latest board is shown) instead of overwriting someone's work
+- Card search and filters (text, priority, label, assignee, overdue)
+- Cards can be assigned to board members; columns can be reordered
+- Per-board activity history (who added, moved, edited, assigned or deleted what, including AI edits)
+- Configurable columns (add, rename, delete empty ones; up to 12) with drag-and-drop cards
+- Cards with details, priority, due date (overdue highlighting) and labels; board stats
+- Admin screen to promote, demote and remove users
+- AI sidebar chat per board that can answer questions and edit the board (it can never delete cards)
 
 ## Run locally
 
@@ -50,6 +57,7 @@ cd frontend
 npm run lint
 npm run typecheck
 npm run test:unit
+npm run test:coverage   # unit tests with a coverage report
 npm run test:e2e
 ```
 
@@ -60,6 +68,7 @@ Backend:
 ```bash
 cd backend
 uv run pytest
+uv run pytest --cov=app --cov-report=term-missing   # with coverage
 ```
 
 The default backend run never calls OpenRouter. To exercise the real model, opt in:

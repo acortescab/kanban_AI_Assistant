@@ -305,3 +305,30 @@ All ten parts are complete, and the follow-up fixes from docs/code_review.md hav
 ## Completion gate before moving to implementation
 
 Implementation work should not begin until the user explicitly approves this plan. Once approved, the agent should proceed in order from Part 2 onward and only complete one phase at a time.
+---
+
+# Phase 2: Project Management application
+
+Requested by the user after the MVP: add user management, multiple boards per user, and other features that build out a full project management app, with strong test coverage and integration tests. This supersedes the MVP scope guardrails above (single hardcoded user, one fixed board).
+
+## Decisions
+
+- Real accounts: users register and sign in with a username and password. Passwords are hashed with stdlib `hashlib.scrypt` (random salt), so no new dependency. The seeded demo account stays `user` / `password` and is an admin.
+- Sessions: an opaque random token in a `sessions` table, sent as an HttpOnly, SameSite=Lax cookie. Every board and AI route requires a session and only sees the caller's own boards (other users' boards return 404).
+- Multiple boards per user, each with a title and description. New boards start with the five default columns (unique generated ids) and no cards.
+- Columns are configurable per board: add, rename, reorder, delete (1 to 12 columns). A board save is still a full replacement of columns and cards.
+- Cards gain priority (low / medium / high), an optional due date, and labels. Existing payloads without them keep working through defaults.
+- Admins can list users, change roles, and delete users. Nobody can remove or demote themselves through the admin API; account deletion is a separate self-service route that requires the password.
+- Old databases are migrated in place by adding missing columns (`ALTER TABLE ... ADD COLUMN`).
+
+## Checklist
+
+- [x] P2.1 Backend: auth, sessions, users, multi-board CRUD, configurable columns, card fields, admin user management, per-board AI chat. Full pytest coverage.
+- [x] P2.2 Frontend: sign in / register against the API, board list and switcher, create / rename / delete boards, column add / delete, card priority / due date / labels. Unit tests.
+- [x] P2.3 Frontend: account settings (display name, password, delete account) and admin user management screen. Unit tests.
+- [x] P2.4 Board productivity: search and filter cards (text, priority, label, overdue only), overdue highlighting, board stats.
+- [x] P2.5 Playwright integration suite for the new flows, coverage reporting with CI floors (backend 90%, frontend 85% lines), docs updated.
+- [x] P2.6 Board sharing: owners add members by username; members edit, rename, use the AI and can leave; owner-only share / remove / delete.
+- [x] P2.7 Optimistic concurrency: board versions via ETag / If-Match, atomic check-and-bump, stale saves and stale AI edits refused with 409, frontend reloads and drops queued saves.
+- [x] P2.8 Card assignees (validated against board members, cleared when a member leaves, usable by the AI), per-board activity history, column reordering.
+- [ ] P2.9 Next candidates: card comments, notifications for assignments, board templates.
