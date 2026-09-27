@@ -15,7 +15,6 @@
 @theme inline {
   --color-background: var(--surface);
   --color-foreground: var(--navy-dark);
-  --font-sans: var(--font-body);
 }
 
 * {

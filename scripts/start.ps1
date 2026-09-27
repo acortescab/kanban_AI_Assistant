@@ -3,6 +3,19 @@ $ErrorActionPreference = 'Stop'
 $rootDir = Split-Path -Parent $PSScriptRoot
 Set-Location $rootDir
 
+$envFile = Join-Path $rootDir '.env'
+if (-not (Test-Path $envFile)) {
+    Write-Error "Missing .env in $rootDir. Copy .env.example to .env and add your OpenRouter API key."
+    exit 1
+}
+
+$keyLine = Select-String -Path $envFile -Pattern '^\s*OPENROUTER_API_KEY\s*=\s*(.*)$' |
+    Select-Object -First 1
+if (-not $keyLine -or -not $keyLine.Matches[0].Groups[1].Value.Trim()) {
+    Write-Error "OPENROUTER_API_KEY is missing or empty in $envFile."
+    exit 1
+}
+
 # Native commands do not throw on failure in Windows PowerShell, so check exit codes.
 docker info | Out-Null
 if ($LASTEXITCODE -ne 0) {

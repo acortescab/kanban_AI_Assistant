@@ -59,7 +59,7 @@
           "name": "title",
           "type": "TEXT",
           "not_null": true,
-          "default": "Project Board"
+          "notes": "Set to 'Project Board' when the board row is seeded. The column has no SQL DEFAULT."
         },
         {
           "name": "created_at",
@@ -142,8 +142,9 @@
         {
           "name": "details",
           "type": "TEXT",
-          "not_null": false,
-          "default": ""
+          "not_null": true,
+          "default": "",
+          "notes": "Optional to the caller: the API and the frontend both send an empty string rather than null."
         },
         {
           "name": "sort_order",
@@ -210,6 +211,9 @@
   "notes": [
     "The MVP keeps the implementation purposefully simple: one user, one board, fake login in the frontend, and no auth table required yet.",
     "The schema still supports future multi-user growth by storing users separately and allowing one-to-many board ownership.",
-    "This model is designed to map cleanly to the existing frontend board state without unnecessary complexity."
+    "This model is designed to map cleanly to the existing frontend board state without unnecessary complexity.",
+    "Foreign keys are enforced: every connection sets PRAGMA foreign_keys = ON. There are no cascades, so rows are deleted children first.",
+    "Saves rewrite the cards table in full, but each card keeps its original created_at and gets a fresh updated_at.",
+    "The AI is not allowed to remove cards. A board the model returns that drops an existing card id is rejected before it is saved."
   ]
 }

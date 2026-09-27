@@ -300,7 +300,7 @@ Success criteria:
 
 ## Current project baseline
 
-All ten parts are complete, and the follow-up fixes from docs/code_review.md have been applied. The app runs as a single Docker container. The board persists in SQLite on the `kanban-data` volume, supports add, edit, delete, rename and drag-and-drop, and the AI sidebar can read and change it. Tests: backend pytest, frontend Vitest, and a Playwright suite that runs against the real backend with an OpenRouter stub.
+All ten parts are complete, and the follow-up fixes from docs/code_review.md have been applied. The app runs as a single Docker container. The board persists in SQLite on the `kanban-data` volume, supports add, edit, delete, rename and drag-and-drop, and the AI sidebar can read and change it. Tests: backend pytest, frontend Vitest, and a Playwright suite that runs against the real backend with an OpenRouter stub. `.github/workflows/ci.yml` runs lint, typecheck, unit, backend, and end-to-end gates on every push, and the AI path itself is verified by opt-in live tests because the free model is only intermittently reachable.
 
 ## Completion gate before moving to implementation
 

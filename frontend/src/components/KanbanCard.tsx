@@ -16,9 +16,6 @@ export const KanbanCard = ({ card, onDelete, onEdit }: KanbanCardProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: card.id, disabled: isEditing });
 
-  // While editing, skip the drag props: they add role="button" and aria-disabled around the form.
-  const dragProps = isEditing ? {} : { ...attributes, ...listeners };
-
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -48,7 +45,6 @@ export const KanbanCard = ({ card, onDelete, onEdit }: KanbanCardProps) => {
         "transition-all duration-150",
         isDragging && "opacity-60 shadow-[0_18px_32px_rgba(3,33,71,0.16)]"
       )}
-      {...dragProps}
       data-testid={`card-${card.id}`}
     >
       {isEditing ? (
@@ -95,6 +91,30 @@ export const KanbanCard = ({ card, onDelete, onEdit }: KanbanCardProps) => {
             </p>
           ) : null}
           <div className="-mx-2 mt-2 flex items-center justify-end gap-1">
+            {/* The handle is the card's only drag surface, so it carries the button role
+                and the keyboard sensor instead of nesting them around the card body. */}
+            <button
+              type="button"
+              {...attributes}
+              {...listeners}
+              className="cursor-grab touch-none rounded-full border border-transparent px-2 py-1 text-[var(--gray-text)] transition hover:border-[var(--stroke)] hover:text-[var(--navy-dark)] active:cursor-grabbing"
+              aria-label={`Move ${card.title}`}
+              data-testid={`card-handle-${card.id}`}
+            >
+              <svg
+                viewBox="0 0 10 16"
+                className="h-4 w-2.5 fill-current"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <circle cx="2" cy="2" r="1.5" />
+                <circle cx="8" cy="2" r="1.5" />
+                <circle cx="2" cy="8" r="1.5" />
+                <circle cx="8" cy="8" r="1.5" />
+                <circle cx="2" cy="14" r="1.5" />
+                <circle cx="8" cy="14" r="1.5" />
+              </svg>
+            </button>
             <button
               type="button"
               onClick={startEditing}

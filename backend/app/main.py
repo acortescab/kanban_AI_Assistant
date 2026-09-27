@@ -38,7 +38,10 @@ def health_check() -> dict[str, str]:
 
 @app.get("/api/board")
 def get_board() -> BoardDataModel:
-    return get_board_record()
+    try:
+        return get_board_record()
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.put("/api/board")

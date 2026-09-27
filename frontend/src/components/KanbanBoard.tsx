@@ -4,14 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
+  pointerWithin,
   useSensor,
   useSensors,
-  pointerWithin,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { AiChatSidebar } from "@/components/AiChatSidebar";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
@@ -21,6 +23,18 @@ import {
   moveCard,
   type BoardData,
 } from "@/lib/kanban";
+
+const loadBoard = async (): Promise<BoardData | null> => {
+  try {
+    const response = await fetch("/api/board");
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as BoardData;
+  } catch {
+    return null;
+  }
+};
 
 const saveBoard = async (board: BoardData) => {
   const response = await fetch("/api/board", {
@@ -44,25 +58,25 @@ export const KanbanBoard = () => {
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+  const [completedSaves, setCompletedSaves] = useState(0);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingSaves = useRef(0);
 
   useEffect(() => {
-    fetch("/api/board")
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error();
-        }
-        return response.json() as Promise<BoardData>;
-      })
-      .then(setBoard)
-      .catch(() => setError("Could not load the board. Please refresh the page."));
+    void loadBoard().then((loaded) => {
+      if (loaded) {
+        setBoard(loaded);
+      } else {
+        setError("Could not load the board. Please refresh the page.");
+      }
+    });
   }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
-    })
+    }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
   if (!board) {
@@ -78,15 +92,29 @@ export const KanbanBoard = () => {
     );
   }
 
-  // Saves run one at a time so the last change is always the last one written.
+  // Every write goes through this queue, including the AI's, so the last write
+  // enqueued is always the last one persisted and the screen matches the database.
   const updateBoard = (nextBoard: BoardData) => {
     setBoard(nextBoard);
+    setError("");
     pendingSaves.current += 1;
     setIsSaving(true);
     saveQueue.current = saveQueue.current
       .then(() => saveBoard(nextBoard))
-      .then(() => setError(""))
-      .catch(() => setError("Could not save your last change. Please refresh the page."))
+      .then(() => setCompletedSaves((count) => count + 1))
+      .catch(async () => {
+        // The screen is showing changes that were never written, so drop them
+        // and fall back to the last state the server actually stored.
+        const reloaded = await loadBoard();
+        setError(
+          reloaded
+            ? "Could not save your last change. The board was reloaded from the server, so unsaved changes were lost."
+            : "Could not save your last change. Please refresh the page."
+        );
+        if (reloaded) {
+          setBoard(reloaded);
+        }
+      })
       .finally(() => {
         pendingSaves.current -= 1;
         setIsSaving(pendingSaves.current > 0);
@@ -168,7 +196,11 @@ export const KanbanBoard = () => {
   const activeCard = activeCardId ? board.cards[activeCardId] : null;
 
   return (
-    <div className="relative overflow-hidden">
+    <div
+      className="relative overflow-hidden"
+      data-testid="board"
+      data-saves-completed={completedSaves}
+    >
       <div className="pointer-events-none absolute left-0 top-0 h-[420px] w-[420px] -translate-x-1/3 -translate-y-1/3 rounded-full bg-[radial-gradient(circle,_rgba(32,157,215,0.25)_0%,_rgba(32,157,215,0.05)_55%,_transparent_70%)]" />
       <div className="pointer-events-none absolute bottom-0 right-0 h-[520px] w-[520px] translate-x-1/4 translate-y-1/4 rounded-full bg-[radial-gradient(circle,_rgba(117,57,145,0.18)_0%,_rgba(117,57,145,0.05)_55%,_transparent_75%)]" />
 
@@ -256,7 +288,7 @@ export const KanbanBoard = () => {
 
           <AiChatSidebar
             waitForSaves={() => saveQueue.current}
-            onBoardUpdate={setBoard}
+            onBoardUpdate={updateBoard}
           />
         </div>
       </main>

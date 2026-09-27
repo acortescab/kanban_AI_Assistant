@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import Home from "@/app/page";
@@ -92,6 +92,25 @@ describe("KanbanBoard", () => {
     expect(api.puts).toHaveLength(1);
   });
 
+  // Regression guard. The column title input is uncontrolled and keyed by the saved title,
+  // so a failed save reloads the board and must remount it with the persisted title rather
+  // than leaving the rejected text on screen.
+  it("restores the saved column title in the input when a rename fails", async () => {
+    mockBoardApi(initialData, { failPut: true });
+    render(<KanbanBoard />);
+    const input = within(await getFirstColumn()).getByLabelText("Column title");
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "Broken{enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not save/i);
+    await waitFor(async () =>
+      expect(within(await getFirstColumn()).getByLabelText("Column title")).toHaveValue(
+        "Backlog"
+      )
+    );
+  });
+
   it("does not save a column title that is unchanged or empty", async () => {
     const api = mockBoardApi();
     render(<KanbanBoard />);
@@ -173,6 +192,16 @@ describe("KanbanBoard", () => {
     expect(within(column).getByText("Align roadmap themes")).toBeInTheDocument();
     expect(within(column).queryByText("Not saved")).not.toBeInTheDocument();
     expect(api.puts).toHaveLength(0);
+  });
+
+  it("gives each card a drag handle button instead of making the card a button", async () => {
+    render(<KanbanBoard />);
+    const card = within(await getFirstColumn()).getByTestId("card-card-1");
+
+    expect(
+      within(card).getByRole("button", { name: /move align roadmap themes/i })
+    ).toBeInTheDocument();
+    expect(card).not.toHaveAttribute("role", "button");
   });
 
   it("shows an error and no board when loading fails, without saving anything", async () => {
@@ -266,5 +295,65 @@ describe("KanbanBoard", () => {
 
     expect(await screen.findByText("Done.")).toBeInTheDocument();
     expect(events).toEqual(["save started", "save finished", "ai"]);
+  });
+
+  it("persists the AI board after an edit made while the request is in flight", async () => {
+    const api = mockBoardApi();
+    const boardFetch = api.fetch;
+    const aiBoard: BoardData = {
+      ...initialData,
+      cards: {
+        ...initialData.cards,
+        "card-1": { id: "card-1", title: "Changed by AI", details: "" },
+      },
+    };
+    let releaseAi = () => {};
+    global.fetch = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === "/api/ai/chat") {
+        await new Promise<void>((resolve) => {
+          releaseAi = resolve;
+        });
+        return jsonResponse({ response: "Done.", board: aiBoard });
+      }
+      return boardFetch(input, init);
+    });
+
+    render(<KanbanBoard />);
+    const column = await getFirstColumn();
+    await userEvent.type(screen.getByLabelText("Message to AI"), "Summarize");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+
+    // The AI request is in flight, so this edit queues a save that races the reply.
+    await addCard(column, "Edited during the request", "Details");
+
+    await act(async () => releaseAi());
+
+    expect(await screen.findByText("Changed by AI")).toBeInTheDocument();
+    await waitFor(() => expect(api.puts.length).toBeGreaterThanOrEqual(2));
+    expect(api.puts.at(-1)).toEqual(aiBoard);
+    expect(screen.queryByText("Edited during the request")).not.toBeInTheDocument();
+  });
+
+  it("reloads the saved board when a save fails", async () => {
+    const api = mockBoardApi();
+    const boardFetch = api.fetch;
+    let failNextPut = true;
+    global.fetch = vi.fn<typeof fetch>(async (input, init) => {
+      if (init?.method === "PUT" && failNextPut) {
+        failNextPut = false;
+        return jsonResponse({ detail: "Save failed" }, false);
+      }
+      return boardFetch(input, init);
+    });
+
+    render(<KanbanBoard />);
+    const column = await getFirstColumn();
+    await addCard(column, "Never saved", "Details");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /could not save your last change/i
+    );
+    expect(screen.queryByText("Never saved")).not.toBeInTheDocument();
+    expect(api.board.cards["card-1"]).toBeDefined();
   });
 });

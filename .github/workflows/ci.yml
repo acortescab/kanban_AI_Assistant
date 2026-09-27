@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    # A single job on purpose: the backend test suite resolves the static site from
+    # frontend/out, so the frontend has to be built before pytest runs. That also stops
+    # test_frontend_serving.py from skipping its coverage in CI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build the static frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --frozen
+
+      - name: Backend tests
+        working-directory: backend
+        run: uv run pytest
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Frontend unit tests
+        working-directory: frontend
+        run: npm run test:unit
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Live AI tests against the real model
+        working-directory: backend
+        # Opt-in and skipped by default: the free model sits behind a shared upstream
+        # pool, so this is allowed to skip rather than fail.
+        continue-on-error: true
+        run: uv run pytest -m live

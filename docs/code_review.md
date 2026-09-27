@@ -1,222 +1,239 @@
 # Code Review
 
 Date: 2026-09-27
-Scope: entire repository at commit `9125023` (backend, frontend, Docker, scripts, tests, docs).
+Scope: entire repository at commit `f8b6ec5` (backend, frontend, Docker, scripts, tests, docs).
+Supersedes the review written at `9125023`; previous-finding status is tracked in the last section.
 
 ## Current health
 
 | Check | Result |
 |---|---|
-| Backend `pytest` | 11 passed, 1 warning (Starlette: `httpx` with `TestClient` is deprecated) |
-| Frontend `vitest run` | 13 passed |
-| Frontend `eslint .` | 1 error, 1 warning |
-| Frontend `tsc --noEmit` | Fails: test globals untyped, one type error in the Playwright spec |
-| Business requirement "cards can be edited" | Not implemented |
+| Backend `uv run pytest` | 29 passed, 3 live deselected |
+| Frontend `npm run test:unit` | 26 passed (3 files) |
+| Frontend `npm run lint` | clean |
+| Frontend `tsc --noEmit` | clean |
+| Frontend `npm run test:e2e` | 9 passed (Chromium) |
+| Backend `uv run pytest -m live` | opt-in; 2 passed, 1 skipped (upstream rate limit) |
 
-Running the backend tests modifies the committed `backend/app/kanban.db` (see B3).
+The toolchain is genuinely green. The previous review's claim that every finding was addressed is verified: the fixed-column validator, the removal of the `initialData` fallback, the card editor, the serialized save queue, the Docker volume, the test database isolation and the real-backend e2e suite are all present and working.
+
+What remains are correctness problems that the test suites structurally cannot catch, plus the fact that no gate enforces any of it.
 
 ## Summary
 
-The architecture is simple and fits the MVP. The main risks are to data integrity:
+The architecture is right for the MVP: one container, one board, one JSON contract shared by both sides, and a validator that enforces the fixed columns. The remaining risk is concentrated in the AI feature and in the save path, not in the board mechanics.
 
-- Board data is lost whenever the container is recreated.
-- A failed load followed by any edit overwrites the saved board with demo data.
-- Drag-and-drop sends one save request per hover step.
-- Nothing stops a save (including one from the AI) from changing the fixed columns, and a changed column set causes all cards to be deleted on the next startup.
+- The AI response path can silently desynchronize the UI from the database (H1).
+- The AI is allowed to delete the entire board, and the storage design makes that unrecoverable (H2).
+- The AI has never been run against the real model, and the structured-output parameter is very likely being ignored (H3).
+- Nothing enforces the lint, typecheck and test gates that CLAUDE.md calls mandatory (M4).
 
-Card editing, a stated requirement, is missing. Lint and typecheck fail. There is also a moderate amount of duplicated and dead defensive code that goes against the project's coding standards.
-
-Severity: **High** = data loss or a missing requirement. **Medium** = incorrect behavior or a broken toolchain. **Low** = cleanup or simplification.
+Severity: **High** = silent data loss or an unverified core feature. **Medium** = incorrect behavior, a broken gate, or an accessibility gap. **Low** = cleanup, simplification, or documentation drift.
 
 ---
 
 ## High
 
-### H1. Board data is not persisted across container restarts
-- `docker-compose.yml` has no volume, so the SQLite file lives inside the container at `/app/backend/app/kanban.db`.
-- `scripts/stop.*` runs `docker compose down`, which removes the container, and `scripts/start.sh:12-15` does the same before every start.
-- Every stop/start cycle therefore resets the board to the seed data. This defeats the persistence built in PLAN Parts 6-7.
-- **Action:**
-  - Move the database path to a dedicated directory, e.g. `DB_PATH = Path(os.getenv("DB_PATH", ...))` or a fixed `/app/data/kanban.db`.
-  - Mount a named volume there in `docker-compose.yml`.
+### H1. An AI board update can silently overwrite itself on the server
 
-### H2. A failed board load followed by any edit overwrites the saved board with demo data
-- `KanbanBoard.tsx:52` initializes state to `initialData`.
-- `KanbanBoard.tsx:67-69` silently falls back to `initialData` when the GET fails.
-- The next user action goes through `updateBoard` (`KanbanBoard.tsx:97-110`) and PUTs that demo-derived board, replacing whatever was stored.
-- The same happens if the user edits before the initial GET resolves.
-- **Action:**
-  - Start with `board = null` and render a loading state until the GET succeeds.
-  - On failure, show an error and do not allow edits.
-  - Remove the `initialData` fallback. `initialData` then only needs to exist as backend seed data and test fixture.
+- `KanbanBoard.tsx:257-260` passes `waitForSaves={() => saveQueue.current}` and `onBoardUpdate={setBoard}`.
+- `waitForSaves` resolves the queue *as it exists when the request is sent*. Any edit made after that snapshot appends a new PUT carrying the pre-AI board.
+- `onBoardUpdate` bypasses `updateBoard` entirely, so the AI's board is never queued. The pending user PUT therefore lands *after* the backend's own AI save.
+- Result: the database holds the pre-AI board while the screen shows the AI's board. No error is raised anywhere. The user's edit is gone from the server and the discrepancy only surfaces on the next reload.
+- The test at `KanbanBoard.test.tsx:239-269` proves the ordering *before* the request but says nothing about the window *during* it, so the suite passes while the bug is live.
+- **Action:** route the AI's board through the same save queue as user edits, so whichever write is enqueued last is also written last. The redundant PUT is worth it: it makes the server match the screen deterministically. Add a test that enqueues a user edit while the AI request is in flight and asserts the final saved board is the AI's.
 
-### H3. Card editing is not implemented
-- AGENTS.md: "The cards on the Kanban board can be moved with drag and drop, and edited".
-- `KanbanCard.tsx` only supports Remove. Only the AI can change a card's title or details.
-- **Action:** add inline edit (title and details) to `KanbanCard`, wired through a `handleEditCard` in `KanbanBoard`, plus a unit test and an e2e test.
+### H2. The AI can delete every card, and the storage design makes that unrecoverable
 
-### H4. The fixed five-column board is not enforced; a different column set deletes all cards on restart
-- `BoardDataModel` (`schemas.py:23-46`) accepts any list of columns. `PUT /api/board` and AI responses (`ai_flow.py:83-84`) can add, remove or re-id columns.
-- `init_database()` (`database.py:93-102`) then sees unexpected column ids on the next startup and deletes all cards and columns.
-- The AI does full board replacement and is only shown an example board, not the rules (`ai_flow.py:10-17`), so this is a realistic path.
-- The backend test `test_board_route_persists_updates` does exactly this (see B3).
-- **Action:**
-  - Validate in `BoardDataModel` that column ids are exactly `col-backlog, col-discovery, col-progress, col-review, col-done`, in order.
-  - Then remove the reset branch from `init_database()`.
-  - Add the rules to the system prompt: fixed column ids, only titles renamable, and every card referenced exactly once.
+- `ai_flow.py:100-101` saves whatever board the model returns as a full replacement. `SYSTEM_PROMPT` (`ai_flow.py:24`) asks for exactly that.
+- A hallucinated empty `cardIds` list, or a card quietly dropped from `cards`, passes `BoardDataModel` and is written. One bad completion wipes the board.
+- `PLAN.md:258` records full board replacement as a "confirmed default", so this is an accepted design decision. The consequence still needs to be stated rather than absorbed.
+- Recovery is not possible: `service.py:50-57` runs `DELETE FROM cards WHERE board_id = ?` and re-inserts every row, so the previous state is not in the database even transiently, and `created_at` on every card is overwritten (L1).
+- **Action:** prefer a patch contract (the card ids to move, plus adds and edits) over a full replacement. If the replacement stays, keep the previous board and surface it: reject an AI board that drops more than a small number of cards, and have the assistant say so in its `response` text so the change is not silent.
 
-### H5. Drag-over saves on every hover step, and saves race
-- `handleDragOver` (`KanbanBoard.tsx:128-143`) calls `applyMove`, which PUTs the full board on each hover change, often dozens of requests per drag.
-- The requests run concurrently in FastAPI's threadpool, so completion order is not guaranteed and a stale board can be written last.
-- Errors are swallowed (`.catch(() => undefined)`, line 106), so the user is never told a save failed.
-- `saveBoard` is called inside a `setBoard` updater (lines 98-109). Updaters must be pure, and React runs them twice in Strict Mode, which doubles the PUTs in dev.
-- **Action:**
-  - Keep `onDragOver` for visual state only and persist once in `onDragEnd`.
-  - Move the save out of the state updater: compute `next`, `setBoard(next)`, then `saveBoard(next)`.
-  - Show a visible error when a save fails.
+### H3. The AI path has never been verified against the real model
+
+- Every test mocks `httpx.post` (`test_ai_flow.py:25-34`, `test_openrouter.py:53-60`). The previous review's own status records that "every live call returned an upstream 429 from the free tier". The one feature that distinguishes this app has no evidence of working.
+- `RESPONSE_FORMAT` (`ai_flow.py:12-18`) sends `{"type": "json_schema", "json_schema": {...}}` with no `"strict": true`. Pydantic's generated schema omits `cardIds` and `board` from `required` because they have defaults, which strict structured outputs reject outright. The parameter is therefore very likely ignored, which leaves `_strip_code_fences` and the brace-scanning fallback in `_load_json_object` (`ai_flow.py:48-74`) as the mechanism that actually keeps the feature alive.
+- The fixed-column rule is enforced only as prose in `SYSTEM_PROMPT`. `model_validator` functions are invisible to `model_json_schema()`, so the emitted schema does not tell the model the one constraint it is most likely to break.
+- 30 seconds (`openrouter_client.py:43`) for a full board JSON plus twenty history messages against a rate-limited free tier is also optimistic, and a timeout is reported as "Could not reach OpenRouter" (L5).
+- **Action:** call `POST /api/ai/test` against the live model once and record the result in this file. If `response_format` is ignored, delete it and say so, rather than shipping an unverified parameter. Add a marked integration test that is skipped without an API key.
 
 ---
 
 ## Medium
 
-### M1. The AI may overwrite the user's latest edit
-- `AiChatSidebar.tsx:94` re-fetches the board from the server rather than using the board on screen. If a PUT is still in flight, the AI works from a stale board.
-- Its full-board reply is then saved and overwrites the user's change.
-- **Action:** pass the current board from `KanbanBoard` as a prop and send that. Better still, have the backend read the persisted board itself in `/api/ai/chat` and drop `board` from the request (simpler contract, no stale-client risk).
+### M1. A failed save leaves the board permanently out of sync and fails silently
 
-### M2. Lint error in `KanbanColumn`
-- `KanbanColumn.tsx:30-32` calls `setDraftTitle` inside an effect (`react-hooks/set-state-in-effect`).
-- **Action:** remove the effect and give the column a `key` that includes the title from the parent (`key={`${column.id}:${column.title}`}`), or make the input uncontrolled with `defaultValue`.
-- Also fix the unused `init` parameter in `AiChatSidebar.test.tsx:27`.
+- `KanbanBoard.tsx:86-93`: a rejected PUT sets the error message and is never retried. `isSaving` then clears, the screen keeps showing the unsaved board, and the only recovery is a manual reload, which discards every change made since the last successful save.
+- Worse, the next successful save clears the error (`.then(() => setError(""))`, line 88). A transient failure followed by a successful save leaves the user believing nothing was lost, when an intermediate edit was in fact dropped from the database.
+- **Action:** on failure, re-GET the board to resynchronize and tell the user which change was lost, or retry once inside the queue.
 
-### M3. TypeScript check fails
-- `src/test/vitest.d.ts:1` references `vitest` instead of `vitest/globals`, so `describe`/`it`/`expect` are untyped (47 errors).
-- `tests/kanban.spec.ts:3` uses `Parameters<typeof test>[0]["page"]`. The first parameter of `test` is the title string.
-- **Action:**
-  - Change the reference to `/// <reference types="vitest/globals" />`.
-  - Type the helper parameter as `Page` from `@playwright/test`.
-  - Add a `typecheck` script (`tsc --noEmit`).
+### M2. The e2e persistence assertions are racy and can pass without asserting anything
 
-### M4. The Docker build copies local artifacts and the dev database
-- There is no `.dockerignore`. `COPY frontend .` (`Dockerfile:5`) copies host `node_modules` (Windows binaries), `.next` and `out` over the clean `npm ci` install.
-- `COPY backend/app ./app` (`Dockerfile:21`) bakes the local `kanban.db` into the image.
-- **Action:** add a `.dockerignore` excluding `**/node_modules`, `**/.next`, `frontend/out`, `**/kanban.db`, `.venv`, `.env`, `**/__pycache__`, `frontend/test-results`.
+- `tests/kanban.spec.ts:13-15`: `expectSaved` waits for the "Saving" badge to reach count 0. The badge is rendered in the same React commit as the card change, so the preceding `toBeVisible()` and this assertion race. On a fast local PUT the badge may never appear, making the wait a no-op that resolves before the request is even sent.
+- The next line is `signIn(page)`, which is a full `page.goto`. A navigation can cancel an in-flight `fetch`, so the "and persists it" assertion can be validating a save that was aborted mid-flight.
+- **Action:** either drop `expectSaved` and rely on the post-reload assertion, which is the real check, or wait on a deterministic signal such as a `data-testid` marker toggled in the `.then()` of the PUT.
 
-### M5. uv is used unidiomatically and without a lockfile
-- `Dockerfile:17,24` installs uv via pip and then runs `uv pip install .` with open-ended version ranges. There is no `uv.lock`, so builds are not reproducible.
-- **Action:**
-  - Commit `backend/uv.lock`.
-  - Use `COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/` with `uv sync --frozen --no-dev`.
-  - Declare dev dependencies under `[dependency-groups]` so local runs are just `uv run pytest`. This also removes the README's reliance on `../.venv/Scripts/python.exe`, which is Windows-only.
+### M3. Cards cannot be moved with the keyboard, and the drag handle is a `role="button"` around real buttons
 
-### M6. Backend tests mutate the real database
-- `app.main` runs `init_database()` at import against `backend/app/kanban.db`, which is committed to git.
-- `test_board_route_persists_updates` (`test_board_persistence.py:18-41`) writes a two-column board and never restores it. This leaves the repo dirty and triggers the H4 reset.
-- **Action:**
-  - Point the database at a temp file in tests via a `conftest.py` fixture (`monkeypatch` `DB_PATH` plus `init_database()`).
-  - `git rm --cached backend/app/kanban.db` and ignore `*.db`.
+- `KanbanBoard.tsx:62-66` registers only `PointerSensor`. There is no `KeyboardSensor`, so a keyboard user can focus a card, read it, and open its editor, but can never move it. AGENTS.md:9 makes drag-and-drop a core requirement, so this excludes keyboard users from a primary feature.
+- `KanbanCard.tsx:16-20, 43-52`: `useSortable` spreads `role="button"` and `tabIndex=0` onto the `<article>`, which contains the Edit and Remove `<button>` elements. Interactive content nested inside a button role is invalid for assistive technology and produces a confusing announcement.
+- **Action:** add `KeyboardSensor` with `sortableKeyboardCoordinates`, and move the role and tab stop onto a dedicated drag-handle button instead of the whole card.
 
-### M7. Schema is not actually ready for multiple users
-- `board_columns.id` and `cards.id` are global primary keys (`database.py:45-70`), but ids such as `col-backlog` and `card-1` are per-board values. A second user's board would collide.
-- **Action:** use composite primary keys `(board_id, id)` for `board_columns` and `cards`, and update `docs/kanban_schema.json`.
+### M4. No CI, so none of the gates are enforced
 
-### M8. The Windows PowerShell scripts do not detect Docker failures
-- `scripts/start.ps1:6-12` and `stop.ps1`: in PowerShell 5.1 a failing native command does not throw, so `try { docker info }` never reaches `catch`.
-- **Action:** check `$LASTEXITCODE` after `docker info` and `docker compose`.
+- There is no `.github/` directory. `CLAUDE.md:30-31` declares `npm run lint` and `npm run typecheck` mandatory, and both pass today, but only because someone ran them.
+- Every fix from the previous review is one careless commit away from regressing silently: the composite primary keys, the `FIXED_COLUMN_IDS` validator, the removal of the `initialData` fallback, the `.dockerignore` entries. Nothing would fail.
+- **Action:** one workflow running `uv run pytest`, then `npm ci && npm run lint && npm run typecheck && npm run test:unit`, then `npm run test:e2e`. This is the highest-leverage single change for keeping the codebase honest, and it also fixes M5 for free.
 
-### M9. Start scripts behave inconsistently
-- `start.sh` runs in the foreground and tears down first. `start.ps1` and `start.bat` run detached and poll `/api/health`.
-- **Action:** make all three detached, polling health, matching the Windows scripts.
+### M5. Two of the three static-serving tests skip silently on a fresh clone
 
-### M10. End-to-end tests never exercise the backend
-- `playwright.config.ts` starts `next dev` only. `/api/*` does not exist there, so the board falls back to `initialData` and saves fail silently.
-- The e2e tests pass without testing persistence, login-to-board loading, or AI refresh.
-- **Action:** point Playwright at the FastAPI app serving the built frontend (`baseURL: http://127.0.0.1:8000`, `webServer` running uvicorn after `npm run build`). Add a test that reloads the page and asserts a moved card persisted.
+- `test_frontend_serving.py:16-18` skips on `STATIC_DIR is None`. `frontend/out` is gitignored, so on a clean checkout `uv run pytest` reports 21 passed and proves nothing about static serving. The skip reason is printed, but a green summary hides it.
+- **Action:** building the frontend in CI (M4) removes the skip in practice. Until then, surface the skip count in the summary line.
+
+### M6. A fresh clone cannot start the stack
+
+- `docker-compose.yml:7-8` declares `env_file: .env` as mandatory and no `.env.example` is committed. `compose up` fails with a bare "env file not found", and `start.sh:12` aborts on that under `set -e` with no explanation.
+- The failure is indirect on the AI side too: `load_dotenv` (`openrouter_client.py:8`) no-ops when the file is absent, so `POST /api/ai/test` returns 503 "Missing OPENROUTER_API_KEY" with no hint that the file was never created.
+- **Action:** commit `.env.example`, and have `start.sh`, `start.ps1` and `start.bat` test for `.env` up front and print the one-line instruction to create it.
+
+### M7. `updateBoard` derives the next board from the render closure
+
+- `KanbanBoard.tsx:82-94` and every handler at lines 121-166 spread the `board` captured at render time rather than reading the current value.
+- For direct user actions this is safe, because each is a separate event and React re-renders in between. It is not safe for the asynchronous AI path, which is exactly H1.
+- **Action:** resolved together with H1 by routing all board writes through one queue.
 
 ---
 
 ## Low
 
-### L1. Dead defensive code (against the coding standards)
-- `KanbanBoard.tsx:95,99,118,130,150`: null checks on `board`, whose type is non-nullable. Revisit after H2.
-- `KanbanBoard.tsx:28-30`, `AiChatSidebar.tsx:18-20,26-28`: `typeof window` branches in client-only code. Use relative URLs (`fetch("/api/board")`) and delete the helpers.
-- `service.py:69-74`: missing-card check that the `BoardDataModel` validator already guarantees.
-- `main.py:61-65,78-82`: `except Exception` safety nets. FastAPI already returns 500. Map `httpx.HTTPError` to 503 explicitly in `openrouter_client.py` instead.
+### L1. Card timestamps are meaningless
+`service.py:50-57` deletes and re-inserts every card on every save, stamping `now` into both `created_at` and `updated_at`. Only `boards.updated_at` reflects anything real. Either update cards in place, changing only `column_id` and `sort_order`, or stop writing the two columns.
 
-### L2. Duplication
-- The board URL helper and `BOARD_REFRESH_EVENT` are defined in both `KanbanBoard.tsx` and `AiChatSidebar.tsx`. Move them to `src/lib/api.ts`.
-- `createMessageId` duplicates `createId` in `lib/kanban.ts`. Use `crypto.randomUUID()` for both.
-- The model name is hardcoded in `main.py:67` and `openrouter_client.py:6`. Import `MODEL`.
-- `service.py:27-43` builds every `ColumnModel` twice. Build the list once.
+### L2. Declared foreign keys are not enforced
+`database.py:65-80` declares `FOREIGN KEY(board_id, column_id) REFERENCES board_columns(board_id, id)`, but SQLite ignores foreign keys unless `PRAGMA foreign_keys = ON`, which is never set. `get_board_record` then indexes by column id with no guard (`service.py:29`), so a dangling `column_id` raises `KeyError` and returns 500 on `GET /api/board`. Unreachable through the API today, which is why this is Low, but it is a latent 500 one bad write away. Either enable the pragma in `get_connection` or drop the declarations so they do not imply a guarantee that does not exist.
 
-### L3. Hand-rolled `.env` loader
-- `openrouter_client.py:10-30` parses `.env` manually and re-reads it on every request.
-- In Docker, `env_file` already sets the variable, and the extra `./.env:/app/.env` mount (`docker-compose.yml:9-10`) is redundant.
-- **Action:** drop the mount. Either keep a single load at import or use `python-dotenv`, and remove the per-call reload.
+### L3. The service layer raises `HTTPException`
+`service.py:3,16` imports from `fastapi`, so persistence is coupled to the transport, and a missing board surfaces as a 404 for a route the client never requested. `main.py` should own that mapping.
 
-### L4. Structured AI output
-- The system prompt asks for JSON only, and `ai_flow.py:31-57` strips code fences and falls back to the first and last braces.
-- **Action:** send `response_format` with a JSON schema (OpenRouter supports structured outputs for compatible models). If `qwen/qwen3.8-27b:free` does not support it, keep the parser but add the board rules from H4 to the prompt.
-- Conversation history is unbounded. Consider sending only the last N messages.
+### L4. Broken CSS left over from removing Google Fonts
+`globals.css:18` sets `--font-sans: var(--font-body)`, but `--font-body` is defined nowhere, so the token resolves to nothing. `.font-display` (line 32) hardcodes the same `"Segoe UI"` as `body`, so all six `font-display` headings are a no-op class. Remove both and either give the display face a real distinct stack or drop the class and its six usages.
 
-### L5. Static serving gaps
-- `main.py:30-31,87-91` serves only `/` and `/_next`. `favicon.ico` and the other files in `out/` return 404.
-- A missing build raises `FileNotFoundError`, which produces a 500.
-- **Action:** mount `StaticFiles(directory=STATIC_DIR, html=True)` at `/` after the API routes are registered. This replaces the custom `/` handler.
+### L5. Timeouts are misreported and the deadline is tight
+`openrouter_client.py:43,52-53`: `ReadTimeout` is an `httpx.HTTPError`, so a slow free-tier model reports "Could not reach OpenRouter: ReadTimeout(...)", which sends the user looking at connectivity rather than at latency. Handle `httpx.TimeoutException` separately and raise the deadline above 30 seconds.
 
-### L6. Seed data card order
-- `database.py:138` seeds every card with `sort_order` 0, so order within a column depends on SQLite row order until the first save.
-- **Action:** use each card's index within its column.
+### L6. Dead scripts and unused dev dependencies
+`package.json:8` defines `"start": "next start"`, which cannot work with `output: "export"`. Line 11 duplicates `test:unit` as `test`. `@vitest/coverage-v8` is installed with no `test:coverage` script and no threshold. `@types/node` is pinned to `^20` while the Dockerfile builds on Node 24.
 
-### L7. `column_key` is written with the column id
-- `service.py:65` inserts `column.id` (e.g. `col-backlog`) as `column_key`, while the seed data and schema doc use `backlog`.
-- **Action:** with H4 in place, columns never change, so save should `UPDATE` titles only and leave `column_key` alone. Alternatively, drop the `column_key` column.
+### L7. The e2e suite shares one database and depends on declaration order
+`tests/kanban.spec.ts:3` acknowledges the shared state, but "renames a column and persists it" leaves `col-review` titled "QA" and "deletes a card and persists it" removes `card-6` for the remainder of the run. Any future `fullyParallel`, a second worker, or a reorder breaks the suite. The database is written to `os.tmpdir()` with `Date.now()` (`playwright.config.ts:30`) and never cleaned up, so each run leaves a file behind.
 
-### L8. Minor cleanups
-- `docker-compose.yml:13-14`: `APP_ENV` is never read. Remove it.
-- `sqlite3` connections are never closed (`with conn` only commits). Wrap with `contextlib.closing`.
-- `handleAddCard` stores the placeholder `"No details yet."` as real data (`KanbanBoard.tsx:172`). Store `""` and render the placeholder in the UI.
-- `frontend/test-results/.last-run.json` is committed. Add `test-results/` and `playwright-report/` to `frontend/.gitignore`.
-- The Starlette deprecation warning in pytest: follow its instruction when upgrading dependencies.
-- Node 20 in `Dockerfile:1`: move to the current LTS image.
+### L8. Documentation drift
+- `docs/PLAN.md:303` points at `docs/code_review.md` as the record of applied fixes; the file was deleted from the working tree and only restored by this review.
+- `README.md:34` states that "the Docker Compose setup mounts that file into the API container". It does not: the mount was removed in favour of `env_file`, which injects variables rather than mounting a file.
+- `docs/kanban_schema.json:59-62` documents `default: "Project Board"` on `boards.title`. `database.py:40-49` declares no DEFAULT and always inserts the literal, so the doc asserts a constraint the schema does not have.
+- `frontend/AGENTS.md` is accurate. `backend/AGENTS.md` and `scripts/AGENTS.md` are accurate.
 
-### L9. Documentation drift
-- `frontend/AGENTS.md` still says there is no backend, no login and no persistence.
-- `backend/AGENTS.md` and `scripts/AGENTS.md` are placeholders.
-- `docs/kanban_schema.json` `api_contract_expectations.board_payload` lists `id` and `userId`, which the API does not return.
-- The PLAN "Current project baseline" section describes the pre-integration state.
-- **Action:** update these after the fixes above land.
+### L9. `KanbanColumn` writes to the DOM imperatively
+`KanbanColumn.tsx:30-36` assigns `input.value` inside `commitTitle`. If the rename then fails to save, the input shows the new title while `column.title` and the header pill (`KanbanBoard.tsx:207-215`) still show the old one. The `key={column.title}` remount only happens on success, so the two never resynchronize on their own.
+
+### L10. The AI conversation has no live region
+`AiChatSidebar.tsx:128-144` renders messages into a plain `div`. A screen reader user receives no announcement when the assistant replies. `aria-live="polite"` on the message list is a one-attribute fix.
+
+### L11. No request size limit on the chat endpoint
+`AIChatRequestModel` (`schemas.py:62-66`) bounds `question` with `min_length` but nothing bounds `history`, and `ai_flow.py:42` sends the last 20 of whatever arrives. Locally this is harmless, but an unbounded `history` array is an unbounded prompt. `max_length` on the list closes it in one line.
+
+---
+
+## Previous findings: verified status
+
+Every finding from the review at `9125023` was re-checked against the current code.
+
+| Previous | Status | Evidence |
+|---|---|---|
+| H1 board not persisted across restarts | Fixed | `kanban-data` volume, `KANBAN_DB_PATH`, `docker-compose.yml:9-14` |
+| H2 failed load overwrote saved board | Fixed | `board` starts `null`, nothing editable renders until the GET succeeds (`KanbanBoard.tsx:42,68-79`) |
+| H3 card editing missing | Fixed | `KanbanCard.tsx` edit form; e2e at `tests/kanban.spec.ts:79` |
+| H4 fixed columns not enforced | Fixed | `schemas.py:6,31-52`; two regression tests |
+| H5 drag-over saved on every hover | Fixed | `onDragOver` highlights only; the save is in `onDragEnd` |
+| M1 AI could overwrite the latest edit | Partly fixed | The client no longer sends a board and the backend reads its own, but the in-flight window remains (H1) |
+| M2 lint error in `KanbanColumn` | Fixed | `npm run lint` clean |
+| M3 TypeScript check failed | Fixed | `tsc --noEmit` clean |
+| M4 Docker build copied local artifacts | Fixed | `.dockerignore` |
+| M5 uv unidiomatic, no lockfile | Fixed | `uv.lock` committed, uv image pinned, `[dependency-groups]` |
+| M6 tests mutated the real database | Fixed | `conftest.py` `tmp_path` fixture |
+| M7 schema not multi-user ready | Fixed for new databases | Composite primary keys; older files keep single-column keys, as documented in `CLAUDE.md:44` |
+| M8 PowerShell did not detect failures | Fixed | `$LASTEXITCODE` checks |
+| M9 Start scripts inconsistent | Fixed | All three detached, polling `/api/health` |
+| M10 e2e never hit the backend | Fixed | `playwright.config.ts` runs the real backend and an OpenRouter stub |
+| L1-L8 cleanups | Done | No dead `typeof window` branches, no hand-rolled `.env` parser, seeded `sort_order` correct, `column_key` preserved, `test-results` untracked, `*.db` ignored |
+| L9 documentation | Partly | `kanban_schema.json` updated; the README and PLAN drift is new (L8) |
 
 ---
 
 ## Recommended order of work
 
-1. **Data safety:** H1, H2, H4, H5 and M6. These are small, related changes to `KanbanBoard.tsx`, `schemas.py`, `database.py`, `docker-compose.yml` and a test fixture.
-2. **Missing requirement:** H3 (card editing).
-3. **Green toolchain:** M2, M3, then add lint and typecheck to the documented test commands.
-4. **Build and ops:** M4, M5, M8, M9.
-5. **AI correctness:** M1, L4.
-6. **Test realism:** M10.
-7. **Cleanup and docs:** M7, remaining Low items, L9.
+1. **Data integrity:** H1 and H2 together. Both are in `ai_flow.py` and the `KanbanBoard` save path, and fixing them together avoids touching that code twice.
+2. **Prove the feature works:** H3. One live call, recorded in this file, decides whether `response_format` stays or goes.
+3. **Enforce what exists:** M4, which also resolves M5. Smallest change with the largest effect on everything that follows.
+4. **Correctness and access:** M1, M2, M3, M7.
+5. **Fresh-clone experience:** M6, L8.
+6. **Cleanup:** the remaining Low items.
 
-Each step should end with backend `pytest`, frontend `vitest`, `eslint`, `tsc --noEmit` and Playwright passing.
+Every step ends with backend `pytest`, frontend `lint`, `typecheck`, `test:unit` and `test:e2e` green, ideally from CI so the result is recorded rather than remembered.
 
 ---
 
-## Status (2026-09-27)
+## Resolution
 
-All findings above have been addressed, in steps 1-7:
+All findings were worked through in the order above. The table records the outcome of each.
 
-- Data safety (H1, H2, H4, H5, M6), card editing (H3), and a clean toolchain (M2, M3).
-- Build and ops (M4, M5, M8, M9), AI correctness (M1, L4), and test realism (M10).
-- Cleanup (M7, L1-L8) and docs (L9).
+| Finding | Outcome |
+|---|---|
+| H1 | Fixed. The AI's board goes through the same `updateBoard` save queue as user edits, so the last enqueued write is the last write. Covered by "persists the AI board after an edit made while the request is in flight". |
+| H2 | Fixed. `reject_removed_cards` raises before the save, and the prompt now says the AI must never remove a card. Three backend tests cover wiping the board, dropping one card, and the allowed cases. |
+| H3 | Resolved by measurement, see below. |
+| M1 | Fixed. A failed save now reloads the board from the server and shows an error that persists instead of clearing. |
+| M2 | Fixed. The e2e suite waits on the board's `data-saves-completed` counter, so a `page.goto` can no longer cancel an in-flight PUT unnoticed. |
+| M3 | Fixed. Cards are moved from a dedicated handle button that carries the dnd-kit role and the `KeyboardSensor` activator; the card body no longer has `role="button"` around real buttons. |
+| M4 | Fixed. `.github/workflows/ci.yml` runs build, backend tests, lint, typecheck, unit, and e2e on every push and pull request. |
+| M5 | Resolved by M4. The build runs before `pytest`, so `test_frontend_serving.py` no longer skips in CI. |
+| M6 | Fixed. Added `.env.example`; all three start scripts refuse to run without a non-empty key. |
+| M7 | Fixed. `updateBoard` derives the next board from the latest saved board, not the render closure. |
+| L1 | Fixed. Each card keeps its original `created_at`; only `updated_at` advances. |
+| L2 | Fixed. `PRAGMA foreign_keys = ON` per connection. No cascades, so deletes go children first. |
+| L3 | Fixed. The service raises `LookupError`; the route maps it to 404. |
+| L4 | Fixed. Removed the dangling `--font-sans: var(--font-body)`. `.font-display` was kept: it is used in six places, and with the Google font gone there is no other display stack to fall back on. |
+| L5 | Fixed. Deadline raised to 120s, with a distinct message for a slow response versus an unreachable host. |
+| L6 | Fixed. Dropped the `next start` script (it cannot work with `output: "export"`), the duplicate `test` script, and `@vitest/coverage-v8`. `@types/node` moved to `^24` to match the Dockerfile. |
+| L7 | Fixed. The delete test creates and removes its own card, the rename test restores the seeded title, and the AI test is last because the stub's change is not undone. |
+| L8 | Fixed. Schema notes corrected, the README gained the `.env` step and the live-test section, and the `AGENTS.md` files were updated for the new behaviour. |
+| L9 | **Did not reproduce.** The title input is uncontrolled and keyed by the saved title, so a failed save reloads the board and remounts the input with the persisted value. The only way to make the original claim fail is to hold the input reference across the remount, which is a test bug, not a product bug. `KanbanColumn.tsx` is unchanged; a regression test now pins the resync. |
+| L10 | Fixed. `aria-live="polite"` on the message list. |
+| L11 | Fixed. `max_length` on the question, each message, the history list, and the card and column title fields. |
 
-Final checks: backend 21 passed, frontend unit 22 passed, Playwright 9 passed, lint and typecheck clean.
+### H3 in detail
 
-Open items:
+The AI path was measured against the real model rather than assumed.
 
-- Structured output (`response_format`) has not been verified against the live model. Every live call returned an upstream 429 from the free tier.
-- If the user edits the board while an AI request is in progress and the AI returns a board, the AI's board replaces that edit.
-- Databases created before M7 keep the old single-column primary keys (`CREATE TABLE IF NOT EXISTS` does not change existing tables). They still work for the single MVP board. A new database gets the composite keys.
+- The key and the model id are both valid. A bad key returns 401; this one returns 429.
+- `qwen/qwen3.8-27b:free` sits behind a shared upstream pool and fails often with
+  `limit_source: "upstream_provider_shared_pool"`, provider `ModelRun`. It is intermittently
+  available, so a failure says nothing about the code.
+- When the pool allows a request, the model returns clean, unfenced JSON that matches the
+  intended shape, the tolerant parser accepts it, and a card move is applied and persisted
+  end to end.
+- The generated `response_format` schema is not strict-compatible: `board`, `details` and
+  `cardIds` carry defaults, so Pydantic omits them from `required` and OpenRouter strict mode
+  would reject it. The schema is therefore advisory and the parser is the real safety net.
+  That is now stated in the code rather than implied.
+- `backend/tests/test_ai_flow_live.py` covers this. It is marked `live` and excluded by
+  default through `addopts` in `backend/pyproject.toml`, and it skips instead of failing when
+  the upstream is rate limited. Run it with `uv run pytest -m live`.
 
-Fixed after step 7: narrow columns. Below 1536px the chat now sits under the board, the page max width is 1800px, and card buttons sit under the text. At 1280px, columns went from 150px to 227px and cards from 306px to 196px tall.
+### Note on the L4 tradeoff
+
+`layout.tsx` loads no font at all, so the display face is `body`'s stack. Giving the headings
+a genuinely distinct face would mean reintroducing a webfont, which the project explicitly
+avoids because it breaks container builds. The single-stack MVP is the intended tradeoff.

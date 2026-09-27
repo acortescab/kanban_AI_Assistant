@@ -1,5 +1,3 @@
-from fastapi import HTTPException
-
 from app.database import get_connection, get_now_iso
 from app.schemas import BoardDataModel, CardModel, ColumnModel
 
@@ -13,7 +11,7 @@ def get_board_record() -> BoardDataModel:
             (DEFAULT_BOARD_ID,),
         ).fetchone()
         if board_row is None:
-            raise HTTPException(status_code=404, detail="Board not found")
+            raise LookupError("Board not found")
 
         column_rows = conn.execute(
             "SELECT id, title FROM board_columns WHERE board_id = ? ORDER BY sort_order",
@@ -47,13 +45,31 @@ def save_board_record(board: BoardDataModel) -> BoardDataModel:
                 (column.title, DEFAULT_BOARD_ID, column.id),
             )
 
+        # Cards are rewritten in full, so read the original created_at first: the delete
+        # below would otherwise reset every card's created_at on every save.
+        existing_created_at = {
+            row["id"]: row["created_at"]
+            for row in conn.execute(
+                "SELECT id, created_at FROM cards WHERE board_id = ?", (DEFAULT_BOARD_ID,)
+            )
+        }
+
         conn.execute("DELETE FROM cards WHERE board_id = ?", (DEFAULT_BOARD_ID,))
         for column in board.columns:
             for card_order, card_id in enumerate(column.cardIds):
                 card = board.cards[card_id]
                 conn.execute(
                     "INSERT INTO cards (id, board_id, column_id, title, details, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (card.id, DEFAULT_BOARD_ID, column.id, card.title, card.details, card_order, now, now),
+                    (
+                        card.id,
+                        DEFAULT_BOARD_ID,
+                        column.id,
+                        card.title,
+                        card.details,
+                        card_order,
+                        existing_created_at.get(card_id, now),
+                        now,
+                    ),
                 )
 
         conn.execute(
